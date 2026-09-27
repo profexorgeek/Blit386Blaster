@@ -15,7 +15,7 @@ export interface Profile {
  * two different players.
  */
 const PROFILE_SLOT = new URLSearchParams(window.location.search).get('profile');
-const KEY = PROFILE_SLOT ? `rockheal.profile.${PROFILE_SLOT}` : 'rockheal.profile';
+const KEY = PROFILE_SLOT ? `blit386blaster.profile.${PROFILE_SLOT}` : 'blit386blaster.profile';
 
 const ADJECTIVES = [
     'Swift', 'Rusty', 'Quiet', 'Lucky', 'Brave', 'Cosmic', 'Dusty', 'Frosty', 'Gentle', 'Hasty', 'Jolly', 'Lunar',

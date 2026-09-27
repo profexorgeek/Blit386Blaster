@@ -1,14 +1,14 @@
 # Relay
 
 A small, game-agnostic WebSocket relay. It knows nothing about any particular game; games agree on their own message
-formats and the relay just passes them along. One process can serve any number of games (Rockheal, AirPig, ...).
+formats and the relay just passes them along. One process can serve any number of games (Blit386Blaster, AirPig, ...).
 
 What it does:
 
 - **Rooms.** Clients connect to `wss://<host>/<app>/<room>`. Anything a client sends goes to everyone else in that room
   (or to one peer by id). Rooms appear on first join and vanish when empty.
 - **Host election.** The longest-connected peer in a room is its host. When the host leaves, the relay announces the next
-  one. Games use this for whatever needs one owner (Rockheal's rock field).
+  one. Games use this for whatever needs one owner (Blit386Blaster's rock field).
 - **Clock sync.** `ping`/`pong` with the relay's clock, so every peer can agree on "now" to within a few ms.
 - **Scoreboards.** `GET/POST /scores/<app>` keeps the top N scores per app, one row per player, each expiring a set time
   after it was set.
@@ -50,7 +50,7 @@ give it a `scoreboard` block if it keeps scores. Adding a game later is one more
 
 ```json
 "apps": {
-    "rockheal": { "scoreboard": { "ttlSeconds": 300, "keep": 10 }, "maxPeersPerRoom": 24 },
+    "blit386blaster": { "scoreboard": { "ttlSeconds": 300, "keep": 10 }, "maxPeersPerRoom": 24 },
     "airpig":   { "maxPeersPerRoom": 8 }
 }
 ```
@@ -63,7 +63,7 @@ give it a `scoreboard` block if it keeps scores. Adding a game later is one more
 npm install
 npm run dev          # uses config.example.json, restarts on file changes
 npm test             # end-to-end tests against a real relay on a random port
-node scripts/check.ts ws://localhost:8787 rockheal
+node scripts/check.ts ws://localhost:8787 blit386blaster
 ```
 
 Needs Node 22.18 or newer, which runs the TypeScript sources directly (no build step).
@@ -72,7 +72,7 @@ Needs Node 22.18 or newer, which runs the TypeScript sources directly (no build 
 
 The plan: the relay listens on `127.0.0.1:8787` (not reachable from outside), and the web server in front of it handles
 HTTPS for `relay.airpigengine.com` and forwards to it. Browsers on justindjohnson.com then connect to
-`wss://relay.airpigengine.com/rockheal/<room>`.
+`wss://relay.airpigengine.com/blit386blaster/<room>`.
 
 ### 1. Install Node
 
@@ -119,7 +119,7 @@ Without sudo, a user crontab works as a fallback: `crontab -e`, then add
 3. Check it from your own machine:
 
    ```bash
-   cd relay && node scripts/check.ts wss://relay.airpigengine.com rockheal
+   cd relay && node scripts/check.ts wss://relay.airpigengine.com blit386blaster
    ```
 
    Three `OK` lines means browsers can use it. If it fails with `HTTP 200` or `HTTP 400` instead of a WebSocket upgrade,

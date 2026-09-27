@@ -6,7 +6,7 @@ import { blit386 } from 'blit386/vite';
 // restarting it, keeping your score and position when possible (hot reload).
 // You usually do not need to change anything else here.
 export default defineConfig({
-    // Relative asset paths, so the built game works from any folder (e.g. justindjohnson.com/games/rockheal/).
+    // Relative asset paths, so the built game works from any folder (e.g. justindjohnson.com/games/blit386blaster/).
     base: './',
     plugins: [blit386()],
     server: {

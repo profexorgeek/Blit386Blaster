@@ -1,7 +1,7 @@
 // Every tunable number in the game lives here. Distances are pixels, speeds are pixels per second,
 // times are seconds.
 
-export const APP_ID = 'rockheal';
+export const APP_ID = 'blit386blaster';
 
 export const SCREEN_W = 480;
 export const SCREEN_H = 270;

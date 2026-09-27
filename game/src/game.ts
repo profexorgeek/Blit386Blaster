@@ -1,4 +1,4 @@
-// Rockheal - multiplayer asteroids where breaking rocks heals you.
+// Blit386Blaster - multiplayer asteroids where breaking rocks heals you.
 //
 // Fly with WASD (W/S thrust toward/away from the cursor, A/D strafe), aim with the mouse, hold the left button
 // (or Space) to fire. Enemy bullets cost one health circle; the smallest rock fragments drop health circles, and
@@ -940,7 +940,7 @@ class Game {
         const panel = this.drawPanel(260, 104 + rows * 9);
         let y = panel.y + 8;
 
-        textCentered(SCREEN_W / 2, y, C.TEXT, 'R O C K H E A L');
+        textCentered(SCREEN_W / 2, y, C.TEXT, 'B L I T 3 8 6   B L A S T E R');
         y += 14;
         textCentered(SCREEN_W / 2, y, C.TEXT_DIM, 'BREAK ROCKS TO HEAL. SHOOT PILOTS TO WIN.');
         y += 16;

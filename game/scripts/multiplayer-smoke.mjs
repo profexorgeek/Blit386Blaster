@@ -193,7 +193,7 @@ try {
 
     check('A died after 4 hits', deadA.phase === 'dead');
 
-    const board = await (await fetch(`${RELAY_HTTP}/scores/rockheal`)).json();
+    const board = await (await fetch(`${RELAY_HTTP}/scores/blit386blaster`)).json();
     const nameA = await a.evaluate(() => window.__game.game.profile.name);
 
     check('A is on the leaderboard with 1 kill', board.some((row) => row.name === nameA && row.score === 1), JSON.stringify(board));

@@ -16,7 +16,7 @@
     "messagesPerSecond": 100,
     "messageBurst": 200,
     "apps": {
-        "rockheal": {
+        "blit386blaster": {
             "scoreboard": {
                 "ttlSeconds": 300,
                 "keep": 10

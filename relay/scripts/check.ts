@@ -1,7 +1,7 @@
 // Checks a running relay end to end: opens a WebSocket, waits for the welcome, measures a ping, and reads the
 // scoreboard. Run it against the live relay after deploying:
 //
-//   node scripts/check.ts wss://relay.airpigengine.com rockheal
+//   node scripts/check.ts wss://relay.airpigengine.com blit386blaster
 //
 // Pass an Origin with RELAY_ORIGIN if the relay restricts origins (default https://justindjohnson.com).
 
@@ -9,7 +9,7 @@ import { WebSocket } from 'ws';
 
 import type { ServerMessage } from '../src/protocol.ts';
 
-const [base = 'ws://localhost:8787', app = 'rockheal'] = process.argv.slice(2);
+const [base = 'ws://localhost:8787', app = 'blit386blaster'] = process.argv.slice(2);
 const origin = process.env.RELAY_ORIGIN ?? 'https://justindjohnson.com';
 const url = `${base.replace(/\/+$/, '')}/${app}/relay-check`;
 

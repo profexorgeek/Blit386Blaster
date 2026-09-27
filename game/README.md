@@ -1,4 +1,4 @@
-# Rockheal
+# Blit386Blaster
 
 Multiplayer asteroids where breaking rocks heals you. Built with [BLIT386](https://blit386.dev).
 
@@ -51,7 +51,7 @@ This writes a static site to `dist/` that connects to `wss://relay.airpigengine.
 are relative, so upload the contents of `dist/` to any folder, for example:
 
 ```bash
-rsync -av --delete dist/ USER@YOUR_VPS:~/justindjohnson.com/games/rockheal/
+rsync -av --delete dist/ USER@YOUR_VPS:~/justindjohnson.com/games/blit386blaster/
 ```
 
 ## How the multiplayer works

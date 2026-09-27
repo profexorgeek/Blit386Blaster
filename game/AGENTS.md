@@ -137,7 +137,7 @@ Everything below the managed end marker is yours. Write down decisions, todos, o
 yourself or for your AI assistant. Kit updates (`npx blit agents sync`) rewrite only the managed part above and never
 touch this section.
 
-- Rockheal is multiplayer through `../relay`. Read `README.md` ("How the multiplayer works") before changing
+- Blit386Blaster is multiplayer through `../relay`. Read `README.md` ("How the multiplayer works") before changing
   `session.ts`: each player owns their ship and bullets, the host owns rocks and pickups.
 - Rocks and bullets are shared-clock trajectories (`world.ts`). Never move them per tick; rebase them with a new `t0`.
 - Yellow (`C.YELLOW`) is reserved for bullets and the world boundary. Red means health (and the crosshair).
