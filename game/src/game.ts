@@ -1,83 +1,999 @@
-// game - a tiny BLIT386 game called "Catcher".
+// Rockheal - multiplayer asteroids where breaking rocks heals you.
 //
-// Move the paddle to catch the blocks falling from the top.
-// On a phone or tablet: drag or tap - the paddle centers under your finger.
-// On a computer: move the mouse, or use the left and right arrow keys (or A and D) as a fallback.
-// Catch one: +1 point. Miss one: lose a life. Run out of lives and the game starts over.
+// Fly with WASD (W/S thrust toward/away from the cursor, A/D strafe), aim with the mouse, hold the left button
+// (or Space) to fire. Enemy bullets cost one health circle; the smallest rock fragments drop health circles, and
+// every kill restores one too. Die and your kill count goes to a leaderboard that forgets scores after 5 minutes.
 //
-// Every BLIT386 game is one class with up to four methods. We use three of them here:
-//   init()   - runs once at the start (we set up our colors here).
-//   update() - runs about 60 times a second (we move things and check for catches here).
-//   render() - runs about 60 times a second (we draw everything here).
-//
-// Optional hooks you can add later: configure() for screen settings or to turn off the BLIT386
-// splash, onHotReload() to keep score across init() edits while the Vite plugin hot-reloads
-// (see the commented examples below).
-//
-// We do not write a configure() method, so we get the default screen: 320 by 240 pixels at 60 frames per second.
-// Want to learn more? Read AGENTS.md or the docs/ folder next to this file.
-//
-// Testing tip: add `?seed=42` to the page address to get the same falling blocks every run, and open the browser
-// console and type `__game.state()` to see the score, lives, and positions as numbers.
+// Module map:
+//   constants.ts  - every tuning knob
+//   palette.ts    - fixed color slots plus one palette block per player
+//   draw.ts       - circles and filled polygons (the engine draws pixels, lines, and rectangles natively)
+//   sprites.ts    - the 8x8 ship, pre-rotated into 16 frames
+//   starfield.ts  - endless parallax stars and planets
+//   world.ts      - rocks, bullets, and pickups as shared-clock trajectories
+//   net.ts        - relay connection and clock sync (game-agnostic)
+//   session.ts    - who owns what, and every multiplayer message
 
-import { bootstrap, BT, Color32, Rect2i, Vector2i } from 'blit386';
+import { BT, bootstrap, Vector2i } from 'blit386';
 
-// Color slot numbers. We put real colors into these slots in init(), then draw using the numbers.
-// Slot 0 is always transparent, so we start counting at 1.
-const COLOR_BACKGROUND = 1;
-const COLOR_PADDLE = 2;
-const COLOR_ITEM = 3;
-const COLOR_TEXT = 4;
+import {
+    APP_ID,
+    BOUNCE_RESTITUTION,
+    BULLET_SPEED,
+    FIRE_COOLDOWN,
+    HUD_BOTTOM,
+    HUD_TOP,
+    MAX_HEALTH,
+    PICKUP_RADIUS,
+    RESPAWN_DELAY,
+    ROCK_SIZES,
+    SCREEN_H,
+    SCREEN_W,
+    SHIP_ACCEL,
+    SHIP_DRAG,
+    SHIP_MASS,
+    SHIP_MAX_SPEED,
+    SHIP_RADIUS,
+    SHIP_REVERSE_ACCEL,
+    SHIP_SEND_INTERVAL,
+    SHIP_STRAFE_ACCEL,
+    START_HEALTH,
+    WORLD_SIZE,
+} from './constants.ts';
+import { circle, circleFill, convexPolygon, line, pixel, rectFill, text, textCentered, textWidth } from './draw.ts';
+import { Leaderboard } from './leaderboard.ts';
+import { C, allocPlayerColor, createPalette, randomShipHue, setPlayerColor } from './palette.ts';
+import { type Profile, loadProfile, randomName, saveProfile } from './profile.ts';
+import { type LocalShip, Session } from './session.ts';
+import { buildShipSprites, drawShip } from './sprites.ts';
+import { drawStarfield } from './starfield.ts';
+import {
+    type Bullet,
+    type Motion,
+    type Particle,
+    type Rock,
+    bulletPos,
+    randomRange,
+    rockAngle,
+    rockHitRadius,
+    rockMotion,
+    segmentHitsCircle,
+} from './world.ts';
 
-// Sizes and speeds. These are the fun knobs to turn. Change a number, save, and watch what happens.
-const PADDLE_WIDTH = 48;
-const PADDLE_HEIGHT = 8;
-const ITEM_SIZE = 10;
-const PADDLE_SPEED = 3; // how many pixels the paddle moves each step
-const ITEM_FALL_SPEED = 2; // how many pixels a block falls each step
-const SPAWN_EVERY = 45; // a new block appears every this many steps (60 steps is about one second)
-const STARTING_LIVES = 3;
+const PLAY_TOP = HUD_TOP;
+const PLAY_BOTTOM = SCREEN_H - HUD_BOTTOM;
+const VIEW_CENTER_X = SCREEN_W / 2;
+const VIEW_CENTER_Y = PLAY_TOP + (PLAY_BOTTOM - PLAY_TOP) / 2;
+const SPAWN_SHIELD = 2;
+const MAX_PARTICLES = 2500;
+const TICK = 1 / 60;
 
-// A snapshot of the game that a test (or an AI agent driving a browser) can read instead of guessing from pixels.
-interface GameState {
-    ticks: number;
-    score: number;
-    lives: number;
-    paddle: { x: number; y: number; width: number; height: number };
-    items: { x: number; y: number }[];
-}
+type Phase = 'title' | 'playing' | 'dead';
 
-// What the dev build puts on `window.__game`. Open the browser console and type `__game.state()` to try it.
 declare global {
     interface Window {
         __game?: {
-            state(): GameState;
-            frame(): Promise<string>; // the next frame as a PNG data URL, sharp and unscaled by the browser
+            state(): unknown;
+            frame(): Promise<string>;
+            /** Dev builds only: the live game object, for poking at it from the console or `blit play eval:`. */
+            game: unknown;
         };
     }
 }
 
-// Read `?seed=1234` from the page address. The same seed makes the blocks fall in the same places every run,
-// which is how you replay a bug or give a test a fixed starting point. No seed means a different game every time.
-function readSeed(): number | null {
-    const raw = new URLSearchParams(window.location.search).get('seed');
+/** ws(s)://host - the relay's base URL. `?relay=` overrides the build setting, handy for testing. */
+function relayBaseUrl(): string {
+    const override = new URLSearchParams(window.location.search).get('relay');
 
-    if (raw === null) {
-        return null;
-    }
-
-    const seed = Number(raw);
-
-    if (!Number.isSafeInteger(seed)) {
-        console.warn(`[game] Ignoring ?seed=${raw}: it must be a whole number.`);
-
-        return null;
-    }
-
-    return seed;
+    return override ?? import.meta.env.VITE_RELAY_URL ?? 'ws://localhost:8787';
 }
 
-// Turn a PNG blob into a data URL string, which a browser tool can read back out of the page.
+class Game {
+    profile!: Profile;
+    session!: Session;
+    leaderboard!: Leaderboard;
+
+    phase: Phase = 'title';
+    ship: LocalShip = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, tx: 0, ty: 0, hp: 0, kills: 0, alive: false };
+    colorBlock = 0;
+    prevX = 0;
+    prevY = 0;
+
+    /** Camera top-left in world pixels. */
+    camX = WORLD_SIZE / 2 - VIEW_CENTER_X;
+    camY = WORLD_SIZE / 2 - VIEW_CENTER_Y;
+    drift = { x: 14, y: 9 };
+
+    fireCooldown = 0;
+    sendTimer = 0;
+    shieldUntil = 0;
+    deadTime = 0;
+    killedBy = '';
+    lastScore = 0;
+    toast = '';
+    toastUntil = 0;
+
+    particles: Particle[] = [];
+    /** Set by a DOM listener: the engine's per-frame press edge can miss a click shorter than one frame. */
+    clickQueued = false;
+
+    private readonly motion: Motion = { x: 0, y: 0, vx: 0, vy: 0 };
+    private readonly polygon: number[] = [];
+
+    configure() {
+        return {
+            displaySize: new Vector2i(SCREEN_W, SCREEN_H),
+            maxCanvasSize: new Vector2i(SCREEN_W * 4, SCREEN_H * 4),
+            targetFPS: 60,
+            isCapturingKeyboardScroll: true,
+        };
+    }
+
+    async init(): Promise<boolean> {
+        createPalette();
+        buildShipSprites();
+
+        this.profile = loadProfile();
+        this.colorBlock = allocPlayerColor(this.profile.hue);
+
+        const relay = relayBaseUrl();
+
+        this.leaderboard = new Leaderboard(relay);
+        void this.leaderboard.refresh();
+
+        this.session = new Session(`${relay}/${APP_ID}`, this.ship, this.profile, this.effects(), {
+            scoredKill: (victim) => this.showToast(`DESTROYED ${victim.toUpperCase()}`),
+            healed: () => {
+                this.ship.hp = Math.min(MAX_HEALTH, this.ship.hp + 1);
+            },
+        });
+        void this.session.start();
+
+        // Right-click should not open a menu over the game.
+        document.addEventListener('contextmenu', (event) => {
+            if (event.target instanceof HTMLCanvasElement) {
+                event.preventDefault();
+            }
+        });
+        document.addEventListener('pointerdown', (event) => {
+            if (event.target instanceof HTMLCanvasElement && event.button === 0) {
+                this.clickQueued = true;
+            }
+        });
+        BT.hideCursor();
+
+        if (BT.isDevMode) {
+            window.__game = {
+                state: () => ({
+                    phase: this.phase,
+                    status: this.session.status,
+                    isHost: this.session.isHost,
+                    selfId: this.session.selfId,
+                    ship: { ...this.ship },
+                    players: [...this.session.players.values()].map((p) => ({
+                        id: p.id,
+                        name: p.name,
+                        alive: p.alive,
+                        x: Math.round(p.dx),
+                        y: Math.round(p.dy),
+                        hp: p.hp,
+                    })),
+                    rocks: this.session.rocks.size,
+                    pickups: this.session.pickups.size,
+                    bullets: this.session.bullets.length,
+                    particles: this.particles.length,
+                }),
+                frame: async () => blobToDataURL(await BT.captureFrame()),
+                game: this,
+            };
+        }
+
+        return true;
+    }
+
+    // --- Update ------------------------------------------------------------------------------------------------
+
+    update(): void {
+        this.session.update(TICK);
+        this.updateParticles();
+
+        const clicked = this.clickQueued || BT.isKeyPressed('Space') || BT.isKeyPressed('Enter');
+
+        this.clickQueued = false;
+
+        switch (this.phase) {
+            case 'title':
+                this.driftCamera();
+
+                if (BT.isKeyPressed('KeyR')) {
+                    this.rerollIdentity();
+                } else if (clicked && this.session.hasWorld) {
+                    this.spawn();
+                }
+
+                break;
+
+            case 'playing':
+                this.updateShip();
+                break;
+
+            case 'dead':
+                this.deadTime += TICK;
+                this.driftCamera();
+
+                if (clicked && this.deadTime > RESPAWN_DELAY) {
+                    this.spawn();
+                }
+
+                break;
+        }
+    }
+
+    private spawn(): void {
+        const s = this.ship;
+        let x = WORLD_SIZE / 2;
+        let y = WORLD_SIZE / 2;
+
+        for (let attempt = 0; attempt < 60; attempt++) {
+            x = randomRange(200, WORLD_SIZE - 200);
+            y = randomRange(200, WORLD_SIZE - 200);
+
+            if (this.session.isClearOfShips(x, y, 300) && this.isClearOfRocks(x, y, 80)) {
+                break;
+            }
+        }
+
+        Object.assign(s, { x, y, vx: 0, vy: 0, tx: 0, ty: 0, hp: START_HEALTH, kills: 0, alive: true });
+        this.prevX = x;
+        this.prevY = y;
+        this.shieldUntil = this.session.now() + SPAWN_SHIELD;
+        this.phase = 'playing';
+        this.sendTimer = 0;
+        this.session.sendShip();
+    }
+
+    private updateShip(): void {
+        const s = this.ship;
+        const t = this.session.now();
+
+        this.prevX = s.x;
+        this.prevY = s.y;
+
+        // Aim: the nose always points at the cursor.
+        if (BT.pointerPosValid(0)) {
+            const pointer = BT.pointerPos(0);
+            const wx = this.camX + pointer.x;
+            const wy = this.camY + pointer.y;
+
+            if (Math.hypot(wx - s.x, wy - s.y) > 1) {
+                s.angle = Math.atan2(wy - s.y, wx - s.x);
+            }
+        }
+
+        // Thrust relative to the facing: W/S along it, A/D across it.
+        const fx = Math.cos(s.angle);
+        const fy = Math.sin(s.angle);
+        let ax = 0;
+        let ay = 0;
+
+        if (BT.isKeyDown('KeyW')) {
+            ax += fx * SHIP_ACCEL;
+            ay += fy * SHIP_ACCEL;
+        }
+
+        if (BT.isKeyDown('KeyS')) {
+            ax -= fx * SHIP_REVERSE_ACCEL;
+            ay -= fy * SHIP_REVERSE_ACCEL;
+        }
+
+        if (BT.isKeyDown('KeyD')) {
+            ax -= fy * SHIP_STRAFE_ACCEL;
+            ay += fx * SHIP_STRAFE_ACCEL;
+        }
+
+        if (BT.isKeyDown('KeyA')) {
+            ax += fy * SHIP_STRAFE_ACCEL;
+            ay -= fx * SHIP_STRAFE_ACCEL;
+        }
+
+        const thrust = Math.hypot(ax, ay);
+
+        s.tx = thrust > 0 ? ax / thrust : 0;
+        s.ty = thrust > 0 ? ay / thrust : 0;
+        s.vx = (s.vx + ax * TICK) * SHIP_DRAG;
+        s.vy = (s.vy + ay * TICK) * SHIP_DRAG;
+
+        const speed = Math.hypot(s.vx, s.vy);
+
+        if (speed > SHIP_MAX_SPEED) {
+            s.vx *= SHIP_MAX_SPEED / speed;
+            s.vy *= SHIP_MAX_SPEED / speed;
+        }
+
+        s.x += s.vx * TICK;
+        s.y += s.vy * TICK;
+
+        this.bounceOffWalls();
+        this.collideWithRocks(t);
+        this.collideWithShips();
+
+        if (thrust > 0) {
+            this.emitExhaust(s.x, s.y, s.vx, s.vy, s.tx, s.ty, this.colorBlock);
+        }
+
+        this.fireCooldown -= TICK;
+
+        if ((BT.isDown(BT.BTN_POINTER_A, 0) || BT.isKeyDown('Space')) && this.fireCooldown <= 0) {
+            this.fireCooldown = FIRE_COOLDOWN;
+            this.session.fire(
+                s.x + fx * 5,
+                s.y + fy * 5,
+                fx * BULLET_SPEED + s.vx,
+                fy * BULLET_SPEED + s.vy,
+            );
+        }
+
+        this.checkBullets(t);
+        this.checkPickups();
+
+        if (!s.alive) {
+            return;
+        }
+
+        this.sendTimer -= TICK;
+
+        if (this.sendTimer <= 0) {
+            this.sendTimer = SHIP_SEND_INTERVAL;
+            this.session.sendShip();
+        }
+
+        this.centerCamera(s.x, s.y);
+    }
+
+    private bounceOffWalls(): void {
+        const s = this.ship;
+        const r = SHIP_RADIUS;
+
+        if (s.x < r) {
+            s.x = r;
+            s.vx = Math.abs(s.vx) * BOUNCE_RESTITUTION;
+        } else if (s.x > WORLD_SIZE - r) {
+            s.x = WORLD_SIZE - r;
+            s.vx = -Math.abs(s.vx) * BOUNCE_RESTITUTION;
+        }
+
+        if (s.y < r) {
+            s.y = r;
+            s.vy = Math.abs(s.vy) * BOUNCE_RESTITUTION;
+        } else if (s.y > WORLD_SIZE - r) {
+            s.y = WORLD_SIZE - r;
+            s.vy = -Math.abs(s.vy) * BOUNCE_RESTITUTION;
+        }
+    }
+
+    /** Ships cannot pass through rocks: both bounce, weighted by mass, and nobody takes damage. */
+    private collideWithRocks(t: number): void {
+        const s = this.ship;
+
+        for (const rock of this.session.rocks.values()) {
+            const m = rockMotion(rock, t, this.motion);
+            const reach = rockHitRadius(rock) + SHIP_RADIUS;
+            const dx = s.x - m.x;
+            const dy = s.y - m.y;
+
+            if (Math.abs(dx) > reach || Math.abs(dy) > reach) {
+                continue;
+            }
+
+            const dist = Math.hypot(dx, dy);
+
+            if (dist >= reach) {
+                continue;
+            }
+
+            const nx = dist > 0 ? dx / dist : 1;
+            const ny = dist > 0 ? dy / dist : 0;
+
+            // Push the ship out so it never ends up inside.
+            s.x = m.x + nx * reach;
+            s.y = m.y + ny * reach;
+
+            const closing = (s.vx - m.vx) * nx + (s.vy - m.vy) * ny;
+
+            if (closing < 0) {
+                const rockMass = ROCK_SIZES[rock.size].mass;
+                const impulse = (-(1 + BOUNCE_RESTITUTION) * closing) / (1 / SHIP_MASS + 1 / rockMass);
+
+                s.vx += (impulse / SHIP_MASS) * nx;
+                s.vy += (impulse / SHIP_MASS) * ny;
+                this.session.bumpRock(rock, m.vx - (impulse / rockMass) * nx, m.vy - (impulse / rockMass) * ny);
+            }
+
+            // Always leave with at least a little separation speed so the ship cannot get pinned.
+            const away = s.vx * nx + s.vy * ny;
+
+            if (away < 25) {
+                s.vx += (25 - away) * nx;
+                s.vy += (25 - away) * ny;
+            }
+        }
+    }
+
+    /** Ships bounce off each other too. Each player only moves their own ship, so this is half the exchange. */
+    private collideWithShips(): void {
+        const s = this.ship;
+        const reach = SHIP_RADIUS * 2;
+
+        for (const player of this.session.players.values()) {
+            if (!player.alive || !player.hasState) {
+                continue;
+            }
+
+            const dx = s.x - player.dx;
+            const dy = s.y - player.dy;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist >= reach || dist === 0) {
+                continue;
+            }
+
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const closing = (s.vx - player.vx) * nx + (s.vy - player.vy) * ny;
+
+            s.x = player.dx + nx * reach;
+            s.y = player.dy + ny * reach;
+
+            if (closing < 0) {
+                s.vx -= ((1 + BOUNCE_RESTITUTION) / 2) * closing * nx;
+                s.vy -= ((1 + BOUNCE_RESTITUTION) / 2) * closing * ny;
+            }
+        }
+    }
+
+    /**
+     * Bullets move several pixels per tick, so each one is tested as the segment it swept this tick.
+     * - Our bullets hitting rocks: we are the authority, so report it.
+     * - Anyone else's bullets hitting rocks or ships: just remove them locally; their owner or victim reports it.
+     * - Enemy bullets hitting our ship: we are the authority for our own ship.
+     */
+    private checkBullets(t: number): void {
+        const s = this.ship;
+        const selfId = this.session.selfId;
+        const prev = { x: 0, y: 0, vx: 0, vy: 0 };
+
+        for (const bullet of this.session.bullets) {
+            if (bullet.dead) {
+                continue;
+            }
+
+            const now = bulletPos(bullet, t, this.motion);
+            const before = bulletPos(bullet, Math.max(bullet.t0, t - TICK), prev);
+            const isMine = bullet.owner === selfId;
+
+            const rock = this.findRockOnSegment(before.x, before.y, now.x, now.y, t);
+
+            if (rock) {
+                if (isMine) {
+                    this.session.reportRockHit(bullet, rock, now.x, now.y);
+                } else {
+                    bullet.dead = true;
+                }
+
+                continue;
+            }
+
+            if (isMine) {
+                for (const player of this.session.players.values()) {
+                    if (player.alive && segmentHitsCircle(before.x, before.y, now.x, now.y, player.dx, player.dy, SHIP_RADIUS + 1)) {
+                        bullet.dead = true;
+                        break;
+                    }
+                }
+
+                continue;
+            }
+
+            if (s.alive && t >= this.shieldUntil && segmentHitsCircle(before.x, before.y, now.x, now.y, s.x, s.y, SHIP_RADIUS + 1)) {
+                this.takeHit(bullet);
+            }
+        }
+    }
+
+    private findRockOnSegment(ax: number, ay: number, bx: number, by: number, t: number): Rock | null {
+        const m: Motion = { x: 0, y: 0, vx: 0, vy: 0 };
+
+        for (const rock of this.session.rocks.values()) {
+            rockMotion(rock, t, m);
+
+            const r = rockHitRadius(rock);
+
+            if (Math.abs(m.x - bx) > r + 12 || Math.abs(m.y - by) > r + 12) {
+                continue;
+            }
+
+            if (segmentHitsCircle(ax, ay, bx, by, m.x, m.y, r)) {
+                return rock;
+            }
+        }
+
+        return null;
+    }
+
+    private takeHit(bullet: Bullet): void {
+        const s = this.ship;
+
+        this.session.reportHurt(bullet);
+        s.hp -= 1;
+        this.burst(s.x, s.y, 10, [C.ROCK_FLASH, this.colorBlock + 2], 40, 120, 0.35);
+
+        if (s.hp <= 0) {
+            this.die(bullet.owner);
+        }
+    }
+
+    private die(killerId: string): void {
+        const s = this.ship;
+
+        s.alive = false;
+        s.hp = 0;
+        this.phase = 'dead';
+        this.deadTime = 0;
+        this.lastScore = s.kills;
+        this.killedBy = this.session.players.get(killerId)?.name ?? 'someone';
+        this.effects().shipExploded(this.colorBlock, s.x, s.y);
+        this.session.reportDeath(killerId);
+
+        if (s.kills > this.profile.best) {
+            this.profile.best = s.kills;
+            saveProfile(this.profile);
+        }
+
+        if (s.kills > 0) {
+            void this.leaderboard.submit(this.profile.id, this.profile.name, s.kills);
+        } else {
+            void this.leaderboard.refresh();
+        }
+    }
+
+    private checkPickups(): void {
+        const s = this.ship;
+
+        if (s.hp >= MAX_HEALTH) {
+            return; // full up: leave it for someone who needs it
+        }
+
+        const reach = SHIP_RADIUS + PICKUP_RADIUS + 1;
+
+        for (const pickup of this.session.pickups.values()) {
+            if (Math.abs(pickup.x - s.x) < reach && Math.abs(pickup.y - s.y) < reach) {
+                if (Math.hypot(pickup.x - s.x, pickup.y - s.y) < reach) {
+                    this.session.claimPickup(pickup);
+                }
+            }
+        }
+    }
+
+    private isClearOfRocks(x: number, y: number, clearance: number): boolean {
+        const t = this.session.now();
+
+        for (const rock of this.session.rocks.values()) {
+            const m = rockMotion(rock, t, this.motion);
+
+            if (Math.hypot(m.x - x, m.y - y) < rockHitRadius(rock) + clearance) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private centerCamera(x: number, y: number): void {
+        this.camX = x - VIEW_CENTER_X;
+        this.camY = y - VIEW_CENTER_Y;
+    }
+
+    /** While nobody is flying, the camera wanders the field and turns around at the edges. */
+    private driftCamera(): void {
+        this.camX += this.drift.x * TICK;
+        this.camY += this.drift.y * TICK;
+
+        if (this.camX < -40 || this.camX > WORLD_SIZE - SCREEN_W + 40) {
+            this.drift.x = -this.drift.x;
+        }
+
+        if (this.camY < -40 || this.camY > WORLD_SIZE - SCREEN_H + 40) {
+            this.drift.y = -this.drift.y;
+        }
+    }
+
+    private rerollIdentity(): void {
+        this.profile.name = randomName();
+        this.profile.hue = randomShipHue();
+        saveProfile(this.profile);
+        setPlayerColor(this.colorBlock, this.profile.hue);
+        this.session.send({ k: 'hello', name: this.profile.name, hue: this.profile.hue });
+    }
+
+    private showToast(message: string): void {
+        this.toast = message;
+        this.toastUntil = performance.now() + 3000;
+    }
+
+    // --- Particles ---------------------------------------------------------------------------------------------
+
+    private effects() {
+        return {
+            rockHit: (x: number, y: number) => this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25),
+            rockBroken: (size: number, x: number, y: number) =>
+                this.burst(x, y, 6 + size * 8, [C.ROCK_EDGE, C.ROCK_FILL, C.ROCK_FLASH], 20, 70 + size * 15, 0.9),
+            shipExploded: (block: number, x: number, y: number) =>
+                this.burst(x, y, 50, [block, block + 1, block + 2], 20, 160, 1.2),
+            shipHurt: (x: number, y: number) => this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3),
+        };
+    }
+
+    private burst(
+        x: number,
+        y: number,
+        count: number,
+        colors: number[],
+        minSpeed: number,
+        maxSpeed: number,
+        life: number,
+    ): void {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = randomRange(minSpeed, maxSpeed);
+            const lifetime = life * randomRange(0.5, 1);
+
+            this.addParticle(
+                x,
+                y,
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed,
+                lifetime,
+                colors[i % colors.length],
+            );
+        }
+    }
+
+    /** Engine exhaust: pixels squirt out opposite the thrust, in the ship's own color. */
+    private emitExhaust(x: number, y: number, vx: number, vy: number, tx: number, ty: number, block: number): void {
+        for (let i = 0; i < 2; i++) {
+            const speed = randomRange(60, 140);
+            const spread = randomRange(-0.35, 0.35);
+            const ex = -tx * Math.cos(spread) + ty * Math.sin(spread);
+            const ey = -ty * Math.cos(spread) - tx * Math.sin(spread);
+
+            this.addParticle(
+                x + ex * 4,
+                y + ey * 4,
+                vx * 0.3 + ex * speed,
+                vy * 0.3 + ey * speed,
+                randomRange(0.2, 0.45),
+                Math.random() < 0.3 ? block + 2 : block,
+            );
+        }
+    }
+
+    private addParticle(x: number, y: number, vx: number, vy: number, life: number, color: number): void {
+        if (this.particles.length >= MAX_PARTICLES) {
+            return;
+        }
+
+        this.particles.push({ x, y, vx, vy, life, maxLife: life, color });
+    }
+
+    private updateParticles(): void {
+        const list = this.particles;
+
+        for (let i = list.length - 1; i >= 0; i--) {
+            const p = list[i];
+
+            p.life -= TICK;
+
+            if (p.life <= 0) {
+                list[i] = list[list.length - 1];
+                list.pop();
+                continue;
+            }
+
+            p.x += p.vx * TICK;
+            p.y += p.vy * TICK;
+            p.vx *= 0.97;
+            p.vy *= 0.97;
+        }
+
+        // Remote ships squirt exhaust too, from the thrust direction in their last report.
+        for (const player of this.session.players.values()) {
+            if (player.alive && (player.tx !== 0 || player.ty !== 0)) {
+                this.emitExhaust(player.dx, player.dy, player.vx, player.vy, player.tx, player.ty, player.colorBlock);
+            }
+        }
+    }
+
+    // --- Render ------------------------------------------------------------------------------------------------
+
+    render(): void {
+        const t = this.session.now();
+        const s = this.ship;
+        let shipX = s.x;
+        let shipY = s.y;
+
+        if (this.phase === 'playing') {
+            // Draw between the last two physics steps for smooth motion on high-refresh screens.
+            shipX = this.prevX + (s.x - this.prevX) * BT.renderAlpha;
+            shipY = this.prevY + (s.y - this.prevY) * BT.renderAlpha;
+            this.centerCamera(shipX, shipY);
+        }
+
+        const cx = Math.round(this.camX);
+        const cy = Math.round(this.camY);
+
+        BT.clear(C.SPACE);
+        drawStarfield(cx, cy);
+        this.drawBoundary(cx, cy);
+        this.drawRocks(cx, cy, t);
+        this.drawPickups(cx, cy);
+        this.drawParticles(cx, cy);
+        this.drawBullets(cx, cy, t);
+
+        for (const player of this.session.players.values()) {
+            if (player.alive && player.hasState) {
+                drawShip(player.dx - cx, player.dy - cy, player.angle, player.colorBlock);
+            }
+        }
+
+        if (s.alive) {
+            const shielded = t < this.shieldUntil;
+
+            if (!shielded || Math.floor(t * 10) % 2 === 0) {
+                drawShip(shipX - cx, shipY - cy, s.angle, this.colorBlock);
+            }
+        }
+
+        this.drawHud();
+
+        if (this.phase === 'title') {
+            this.drawTitle();
+        } else if (this.phase === 'dead' && this.deadTime > 0.6) {
+            this.drawDeath();
+        }
+
+        this.drawCrosshair();
+    }
+
+    private drawBoundary(cx: number, cy: number): void {
+        const left = -cx;
+        const top = -cy;
+        const right = WORLD_SIZE - cx;
+        const bottom = WORLD_SIZE - cy;
+        const clampX = (x: number) => Math.max(-1, Math.min(SCREEN_W, x));
+        const clampY = (y: number) => Math.max(-1, Math.min(SCREEN_H, y));
+
+        if (top >= 0 && top < SCREEN_H) {
+            line(clampX(left), top, clampX(right), top, C.YELLOW);
+        }
+
+        if (bottom >= 0 && bottom < SCREEN_H) {
+            line(clampX(left), bottom, clampX(right), bottom, C.YELLOW);
+        }
+
+        if (left >= 0 && left < SCREEN_W) {
+            line(left, clampY(top), left, clampY(bottom), C.YELLOW);
+        }
+
+        if (right >= 0 && right < SCREEN_W) {
+            line(right, clampY(top), right, clampY(bottom), C.YELLOW);
+        }
+    }
+
+    private drawPickups(cx: number, cy: number): void {
+        for (const pickup of this.session.pickups.values()) {
+            const x = pickup.x - cx;
+            const y = pickup.y - cy;
+
+            if (x < -8 || y < -8 || x > SCREEN_W + 8 || y > SCREEN_H + 8 || this.session.isClaimPending(pickup.id)) {
+                continue;
+            }
+
+            circleFill(x, y, PICKUP_RADIUS, C.RED);
+        }
+    }
+
+    private drawRocks(cx: number, cy: number, t: number): void {
+        const points = this.polygon;
+
+        for (const rock of this.session.rocks.values()) {
+            const m = rockMotion(rock, t, this.motion);
+            const r = ROCK_SIZES[rock.size].radius;
+            const x = m.x - cx;
+            const y = m.y - cy;
+
+            if (x < -r || y < -r || x > SCREEN_W + r || y > SCREEN_H + r) {
+                continue;
+            }
+
+            const angle = rockAngle(rock, t);
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+
+            points.length = rock.shape.length;
+
+            for (let i = 0; i < rock.shape.length; i += 2) {
+                const px = rock.shape[i];
+                const py = rock.shape[i + 1];
+
+                points[i] = Math.round(x + px * cos - py * sin);
+                points[i + 1] = Math.round(y + px * sin + py * cos);
+            }
+
+            const flashing = t < rock.flashUntil;
+
+            convexPolygon(points, flashing ? C.ROCK_FLASH : C.ROCK_FILL, flashing ? C.ROCK_FLASH : C.ROCK_EDGE);
+        }
+    }
+
+    private drawBullets(cx: number, cy: number, t: number): void {
+        for (const bullet of this.session.bullets) {
+            if (bullet.dead) {
+                continue;
+            }
+
+            const p = bulletPos(bullet, t, this.motion);
+
+            pixel(p.x - cx, p.y - cy, C.YELLOW);
+        }
+    }
+
+    private drawParticles(cx: number, cy: number): void {
+        for (const p of this.particles) {
+            const x = p.x - cx;
+            const y = p.y - cy;
+
+            if (x >= 0 && y >= 0 && x < SCREEN_W && y < SCREEN_H) {
+                pixel(x, y, p.color);
+            }
+        }
+    }
+
+    private drawHud(): void {
+        // Top band: one circle per health unit, filled when full, hollow when empty.
+        rectFill(0, 0, SCREEN_W, HUD_TOP, C.HUD_BG);
+        line(0, HUD_TOP - 1, SCREEN_W - 1, HUD_TOP - 1, C.HUD_LINE);
+
+        const hp = this.ship.alive ? this.ship.hp : 0;
+        const slots = Math.max(START_HEALTH, hp);
+
+        for (let i = 0; i < slots; i++) {
+            const x = 7 + i * 10;
+
+            if (i < hp) {
+                circleFill(x, 5, 3, C.RED);
+            } else {
+                circle(x, 5, 3, C.RED);
+            }
+        }
+
+        // Bottom band: kill count, plus the occasional kill notice or connection note.
+        const top = SCREEN_H - HUD_BOTTOM;
+
+        rectFill(0, top, SCREEN_W, HUD_BOTTOM, C.HUD_BG);
+        line(0, top, SCREEN_W - 1, top, C.HUD_LINE);
+        text(4, top + 1, C.TEXT, `KILLS ${this.ship.kills}`);
+
+        if (performance.now() < this.toastUntil) {
+            textCentered(SCREEN_W / 2, top + 1, C.TEXT, this.toast);
+        }
+
+        if (this.session.status !== 'online') {
+            const note = this.session.status === 'connecting' ? 'CONNECTING' : 'OFFLINE';
+
+            text(SCREEN_W - 4 - textWidth(note), top + 1, C.TEXT_DIM, note);
+        }
+    }
+
+    private drawTitle(): void {
+        const rows = this.scoreRows(7);
+        const panel = this.drawPanel(260, 104 + rows * 9);
+        let y = panel.y + 8;
+
+        textCentered(SCREEN_W / 2, y, C.TEXT, 'R O C K H E A L');
+        y += 14;
+        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, 'BREAK ROCKS TO HEAL. SHOOT PILOTS TO WIN.');
+        y += 16;
+
+        const nameWidth = textWidth(this.profile.name) + 14;
+        const nameX = SCREEN_W / 2 - nameWidth / 2;
+
+        drawShip(nameX + 4, y + 6, -Math.PI / 2, this.colorBlock);
+        text(nameX + 14, y, this.colorBlock, this.profile.name);
+        y += 11;
+        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, `BEST ${this.profile.best}   R: NEW NAME`);
+        y += 15;
+        this.drawScores(panel.x + 20, panel.x + panel.w - 20, y, rows);
+
+        const prompt = this.session.hasWorld ? 'CLICK TO FLY' : 'JOINING...';
+
+        textCentered(SCREEN_W / 2, panel.y + panel.h - 15, C.TEXT, prompt);
+    }
+
+    private drawDeath(): void {
+        const rows = this.scoreRows(6);
+        const panel = this.drawPanel(240, 76 + rows * 9);
+        let y = panel.y + 8;
+
+        textCentered(SCREEN_W / 2, y, C.TEXT, `DESTROYED BY ${this.killedBy.toUpperCase()}`);
+        y += 13;
+        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, `KILLS ${this.lastScore}   BEST ${this.profile.best}`);
+        y += 15;
+        this.drawScores(panel.x + 20, panel.x + panel.w - 20, y, rows);
+
+        if (this.deadTime > RESPAWN_DELAY) {
+            textCentered(SCREEN_W / 2, panel.y + panel.h - 15, C.TEXT, 'CLICK TO FLY AGAIN');
+        }
+    }
+
+    /** How many leaderboard lines to draw: the entries (up to `max`), or one line for the empty message. */
+    private scoreRows(max: number): number {
+        return Math.max(1, Math.min(max, this.leaderboard.entries.length));
+    }
+
+    private drawPanel(w: number, h: number): { x: number; y: number; w: number; h: number } {
+        const x = Math.round(SCREEN_W / 2 - w / 2);
+        const y = Math.round(VIEW_CENTER_Y - h / 2);
+
+        rectFill(x, y, w, h, C.HUD_BG);
+        line(x, y, x + w - 1, y, C.HUD_LINE);
+        line(x, y + h - 1, x + w - 1, y + h - 1, C.HUD_LINE);
+        line(x, y, x, y + h - 1, C.HUD_LINE);
+        line(x + w - 1, y, x + w - 1, y + h - 1, C.HUD_LINE);
+
+        return { x, y, w, h };
+    }
+
+    /** Top pilots of the last five minutes. */
+    private drawScores(left: number, right: number, y: number, rows: number): void {
+        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, 'TOP PILOTS - LAST 5 MINUTES');
+        y += 11;
+
+        const entries = this.leaderboard.entries.slice(0, rows);
+
+        if (entries.length === 0) {
+            textCentered(SCREEN_W / 2, y, C.TEXT_DIM, this.leaderboard.isLoaded ? 'NO KILLS YET' : '...');
+
+            return;
+        }
+
+        entries.forEach((entry, i) => {
+            const color = entry.name === this.profile.name ? this.colorBlock : C.TEXT;
+            const score = String(entry.score);
+
+            text(left, y, C.TEXT_DIM, `${i + 1}.`);
+            text(left + 16, y, color, entry.name);
+            text(right - textWidth(score), y, color, score);
+            y += 9;
+        });
+    }
+
+    private drawCrosshair(): void {
+        if (!BT.pointerPosValid(0)) {
+            return;
+        }
+
+        const p = BT.pointerPos(0);
+
+        circle(p.x, p.y, 4, C.RED);
+        line(p.x - 8, p.y, p.x - 6, p.y, C.RED);
+        line(p.x + 6, p.y, p.x + 8, p.y, C.RED);
+        line(p.x, p.y - 8, p.x, p.y - 6, C.RED);
+        line(p.x, p.y + 6, p.x, p.y + 8, C.RED);
+        pixel(p.x, p.y, C.RED);
+    }
+}
+
+
 function blobToDataURL(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -88,186 +1004,4 @@ function blobToDataURL(blob: Blob): Promise<string> {
     });
 }
 
-class Game {
-    // How big the screen is. We read the real size in init().
-    screen: Vector2i = new Vector2i(320, 240);
-
-    // The paddle's initial position.
-    paddlePos: Vector2i = new Vector2i(0, 0);
-
-    // The blocks falling right now. Each one is a Vector2i holding its top-left corner.
-    items: Vector2i[] = [];
-
-    // The player's score and lives.
-    score: number = 0;
-    lives: number = STARTING_LIVES;
-
-    async init(): Promise<boolean> {
-        // Remember the screen size so the game fits no matter how big it is.
-        this.screen = BT.displaySize;
-
-        // Make a palette (a numbered set of colors) and choose four colors.
-        // Color32(red, green, blue) - each value goes from 0 (none) to 255 (full).
-        const palette = BT.paletteCreate(16);
-
-        palette.set(COLOR_BACKGROUND, new Color32(18, 22, 40)); // dark blue
-        palette.set(COLOR_PADDLE, new Color32(90, 200, 160)); // teal
-        palette.set(COLOR_ITEM, new Color32(240, 180, 70)); // warm yellow
-        palette.set(COLOR_TEXT, new Color32(235, 240, 255)); // near white
-
-        BT.paletteSet(palette);
-
-        // Put the paddle in the middle, near the bottom.
-        this.paddlePos.x = Math.floor((this.screen.x - PADDLE_WIDTH) / 2);
-        this.paddlePos.y = this.screen.y - PADDLE_HEIGHT - 6;
-
-        // Out of the box, player 0 steers with WASD and the arrow keys belong to player 1.
-        // This game has one player, so let both sets of keys move the paddle.
-        BT.inputMap(0, BT.BTN_LEFT, 'KeyA', 'ArrowLeft');
-        BT.inputMap(0, BT.BTN_RIGHT, 'KeyD', 'ArrowRight');
-
-        const seed = readSeed();
-
-        if (seed !== null) {
-            BT.randomSeed(seed);
-        }
-
-        // Dev builds only: let tests and AI agents read the game state and grab exact frames.
-        // A shipped game (a production build) never has `window.__game`.
-        if (BT.isDevMode) {
-            window.__game = {
-                state: () => ({
-                    ticks: BT.ticks,
-                    score: this.score,
-                    lives: this.lives,
-                    paddle: { x: this.paddlePos.x, y: this.paddlePos.y, width: PADDLE_WIDTH, height: PADDLE_HEIGHT },
-                    items: this.items.map((item) => ({ x: item.x, y: item.y })),
-                }),
-                frame: async () => blobToDataURL(await BT.captureFrame()),
-            };
-        }
-
-        return true; // tell the engine that setup worked
-    }
-
-    update(): void {
-        // BLIT386 supports two ways to move the paddle: pointer input (mouse and touch) and the keyboard.
-        // We check the pointer first because it works on phones, tablets, and any computer with a mouse.
-        // The "0" you see in BT.isPointerActive(0) and BT.pointerPos(0) means "the first pointer slot."
-        // A phone can track several fingers at once; slot 0 is always the first (or only) one.
-        if (BT.isPointerActive(0)) {
-            // BT.pointerPos(0) returns a Vector2i: the exact pixel position of the pointer right now.
-            // We want the CENTER of the paddle under the pointer, not its left edge.
-            // Subtracting half the paddle width shifts it left so it is balanced around the cursor or finger.
-            this.paddlePos.x = BT.pointerPos(0).x - Math.floor(PADDLE_WIDTH / 2);
-        } else {
-            // No pointer is active - fall back to the arrow keys, A and D (or a connected gamepad).
-            // BT.isDown() is true for every frame the button is held down, not just the frame it was pressed.
-            if (BT.isDown(BT.BTN_LEFT, 0)) {
-                this.paddlePos.x -= PADDLE_SPEED;
-            }
-
-            if (BT.isDown(BT.BTN_RIGHT, 0)) {
-                this.paddlePos.x += PADDLE_SPEED;
-            }
-        }
-
-        // Keep the paddle on the screen no matter how it moved.
-        // Math.floor makes sure we store a whole number, not a fraction of a pixel.
-        const maxX = this.screen.x - PADDLE_WIDTH;
-
-        if (this.paddlePos.x < 0) {
-            this.paddlePos.x = 0;
-        }
-
-        if (this.paddlePos.x > maxX) {
-            this.paddlePos.x = maxX;
-        }
-
-        // Every SPAWN_EVERY steps, drop a new block at a random spot along the top.
-        if (BT.ticks % SPAWN_EVERY === 0) {
-            // BT.random.int(n) picks a whole number from 0 up to (but not including) n. Unlike the browser's own random,
-            // BT.random can be seeded: a `?seed=` in the address replays the exact same drops.
-            const x = BT.random.int(this.screen.x - ITEM_SIZE);
-            this.items.push(new Vector2i(x, -ITEM_SIZE));
-        }
-
-        // The paddle as a rectangle, used to check for catches.
-        const paddleRect = new Rect2i(this.paddlePos.x, this.paddlePos.y, PADDLE_WIDTH, PADDLE_HEIGHT);
-
-        // Move each block down, then decide: caught, missed, or still falling.
-        const stillFalling: Vector2i[] = [];
-
-        for (const item of this.items) {
-            item.y += ITEM_FALL_SPEED;
-            const itemRect = new Rect2i(item.x, item.y, ITEM_SIZE, ITEM_SIZE);
-
-            if (paddleRect.isIntersecting(itemRect)) {
-                this.score += 1; // the paddle touched it: caught
-            } else if (item.y > this.screen.y) {
-                this.lives -= 1; // it fell off the bottom: missed
-            } else {
-                stillFalling.push(item); // still on its way down
-            }
-        }
-
-        this.items = stillFalling;
-
-        // Out of lives? Start a fresh game.
-        if (this.lives <= 0) {
-            this.score = 0;
-            this.lives = STARTING_LIVES;
-            this.items = [];
-        }
-    }
-
-    render(): void {
-        // Paint the background first. This also erases last frame's drawing.
-        BT.clear(COLOR_BACKGROUND);
-
-        // Draw every falling block.
-        for (const item of this.items) {
-            BT.drawRectFill(new Rect2i(item.x, item.y, ITEM_SIZE, ITEM_SIZE), COLOR_ITEM);
-        }
-
-        // Draw the paddle.
-        BT.drawRectFill(new Rect2i(this.paddlePos.x, this.paddlePos.y, PADDLE_WIDTH, PADDLE_HEIGHT), COLOR_PADDLE);
-
-        // Show the score and lives in the top-left corner.
-        BT.systemPrint(new Vector2i(6, 6), COLOR_TEXT, `Score ${this.score}`);
-        BT.systemPrint(new Vector2i(6, 18), COLOR_TEXT, `Lives ${this.lives}`);
-    }
-
-    // Optional hardware settings. Uncomment to change the screen size or speed, or to
-    // turn off the BLIT386 splash that plays when you build your game for real.
-    // Full detail: docs/basics.md
-    //
-    // configure() {
-    //     return {
-    //         displaySize: new Vector2i(320, 240),
-    //         targetFPS: 60,
-    //         isSplashEnabled: false,
-    //     };
-    // }
-
-    // Optional hot-reload hook (engine 1.4.0+). The blit386() Vite plugin calls this after a
-    // save that re-runs init() (or after a method-only swap). Use the snapshot to keep score
-    // and other fields when you tweak init(). Leave it commented until you need it.
-    // Full detail: docs/hot-reload.md
-    //
-    // onHotReload(context: { reason: string; snapshot?: Record<string, unknown> }): void {
-    //     // Only restore after a re-init (not after a method-only swap).
-    //     if (context.reason !== 'reinit' || !context.snapshot) {
-    //         return;
-    //     }
-    //     if (typeof context.snapshot.score === 'number') {
-    //         this.score = context.snapshot.score;
-    //     }
-    //     if (typeof context.snapshot.lives === 'number') {
-    //         this.lives = context.snapshot.lives;
-    //     }
-    // }
-}
-
-// Hand the Game class to BLIT386. It builds one game, runs init() once, then update() and render() about 60 times a second.
 bootstrap(Game);
