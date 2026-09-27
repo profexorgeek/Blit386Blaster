@@ -10,6 +10,7 @@ import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
 const RELAY_HTTP = 'http://localhost:8787';
+const ROOM = Date.now().toString(36);
 
 const server = await createServer({ logLevel: 'error', server: { port: 0, open: false } });
 
@@ -45,7 +46,8 @@ async function openPlayer(name) {
     const page = await context.newPage();
 
     page.on('pageerror', (error) => failures.push(`${name} page error: ${error.message}`));
-    await page.goto(`${url}?nosplash`);
+    // A room of our own, so a game you have open in another window does not join the test.
+    await page.goto(`${url}?nosplash&room=smoke-${ROOM}`);
     await page.waitForFunction(() => window.__game?.state().status === 'online', null, { timeout: 15000 });
     await page.waitForFunction(() => window.__game.game.session.hasWorld, null, { timeout: 15000 });
 
@@ -109,6 +111,10 @@ try {
     check('B received the rock field', Math.abs(sa.rocks - sb.rocks) <= 2, `A=${sa.rocks} B=${sb.rocks}`);
     check('A sees B', sa.players.some((p) => p.id === sb.selfId));
 
+    const sizes = await Promise.all([a, b].map((page) => page.evaluate(() => window.__game.state().worldSize)));
+
+    check('world grew to 750 for two players, on both', sizes[0] === 750 && sizes[1] === 750, sizes.join(' / '));
+
     // Park both ships in a corner far from the rock field's usual traffic; keep firing lines clear.
     await spawnAt(a, 150, 150);
     await spawnAt(b, 190, 150);
@@ -144,8 +150,16 @@ try {
     await sleep(400);
     check('B lost one health', (await state(b)).ship.hp === 2);
 
-    await fireAt(a, 190, 150);
-    await sleep(400);
+    // A bullet whose message shows up late (fired 0.4 s ago from 90 px away) is already past B when B first hears
+    // of it. B must still test the stretch it missed.
+    await a.evaluate(() => {
+        const session = window.__game.game.session;
+
+        session.send({ k: 'fire', id: 'late-1', x: 100, y: 150, vx: 380, vy: 0, ts: session.now() - 0.4 });
+    });
+    await sleep(300);
+    check('late-arriving bullet still hits', (await state(b)).ship.hp === 1);
+
     await fireAt(a, 190, 150);
     await sleep(600);
 
@@ -214,6 +228,10 @@ try {
     const other = await state(otherPage);
 
     check('remaining player became host', other.isHost && other.players.length === 0);
+    check('world waits before shrinking', other.worldSize === 750, `size=${other.worldSize}`);
+
+    await sleep(10_500);
+    check('world shrank back to 500 for one player', (await state(otherPage)).worldSize === 500);
 } finally {
     await browser.close();
     await server.close();
