@@ -10,7 +10,16 @@ export const SCREEN_H = 270;
 export const HUD_TOP = 11;
 export const HUD_BOTTOM = 12;
 
-export const WORLD_SIZE = 5000;
+/**
+ * The world is a square whose side grows with the number of connected players: WORLD_MIN alone, plus
+ * WORLD_PER_PLAYER for each extra player, capped at WORLD_MAX (reached at 19 players). The host decides the size;
+ * it grows as soon as someone joins, but waits WORLD_SHRINK_DELAY seconds before shrinking so a quick reconnect
+ * does not squeeze everyone.
+ */
+export const WORLD_MIN = 500;
+export const WORLD_MAX = 5000;
+export const WORLD_PER_PLAYER = 250;
+export const WORLD_SHRINK_DELAY = 10;
 
 // --- Ships ---
 export const SHIP_RADIUS = 4;
@@ -50,8 +59,12 @@ export const ROCK_HP = 3;
 /** Collision circle as a fraction of the drawn radius (the polygon is a little smaller than its circle). */
 export const ROCK_HIT_SCALE = 0.9;
 export const ROCK_MAX_SPEED = 120;
-/** The host keeps the field topped up to this many full-size rocks' worth of mass. */
-export const ROCK_TARGET_MASS = 320;
+/**
+ * The host keeps the field topped up to this many full-size rocks' worth of mass per square pixel
+ * (320 in a 5000x5000 world), and never fewer than ROCK_MIN_MASS.
+ */
+export const ROCK_DENSITY = 320 / (5000 * 5000);
+export const ROCK_MIN_MASS = 4;
 export const ROCK_SPAWN_INTERVAL = 0.4;
 export const ROCK_SPAWN_CLEARANCE = 400;
 export const BOUNCE_RESTITUTION = 0.85;

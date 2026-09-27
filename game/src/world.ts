@@ -3,13 +3,28 @@ import {
     PICKUP_LIFETIME,
     ROCK_HIT_SCALE,
     ROCK_MAX_SPEED,
+    ROCK_DENSITY,
+    ROCK_MIN_MASS,
     ROCK_SIZES,
-    WORLD_SIZE,
+    WORLD_MAX,
+    WORLD_MIN,
+    WORLD_PER_PLAYER,
 } from './constants.ts';
 
 // World objects shared by every player. Rocks and bullets never need per-tick network updates: each one stores
 // where it was at a shared time `t0` plus its velocity, and every client computes where it is now from the same
 // clock (wall bounces included). Messages only go out when something changes its course.
+
+/** The current world side length. Set by the host through the session; everything else reads it. */
+export const world = { size: WORLD_MIN };
+
+export function worldSizeFor(playerCount: number): number {
+    return Math.min(WORLD_MAX, WORLD_MIN + WORLD_PER_PLAYER * Math.max(0, playerCount - 1));
+}
+
+export function rockTargetMass(size: number): number {
+    return Math.max(ROCK_MIN_MASS, Math.round(size * size * ROCK_DENSITY));
+}
 
 export interface Rock {
     id: string;
@@ -39,6 +54,8 @@ export interface Bullet {
     vy: number;
     t0: number;
     dead: boolean;
+    /** Local-only: how far along its path (shared-clock time) this client has already hit-tested it. */
+    checkedUntil?: number;
 }
 
 export interface Pickup {
@@ -78,8 +95,8 @@ export function rockMotion(rock: Rock, t: number, out: Motion): Motion {
     const r = rockRadius(rock);
     const dt = t - rock.t0;
 
-    reflect(rock.x0, rock.vx, dt, r, WORLD_SIZE - r, out, 'x');
-    reflect(rock.y0, rock.vy, dt, r, WORLD_SIZE - r, out, 'y');
+    reflect(rock.x0, rock.vx, dt, r, world.size - r, out, 'x');
+    reflect(rock.y0, rock.vy, dt, r, world.size - r, out, 'y');
 
     return out;
 }
@@ -228,7 +245,7 @@ export function isBulletExpired(bullet: Bullet, t: number): boolean {
     const x = bullet.x0 + bullet.vx * dt;
     const y = bullet.y0 + bullet.vy * dt;
 
-    return x < 0 || y < 0 || x > WORLD_SIZE || y > WORLD_SIZE;
+    return x < 0 || y < 0 || x > world.size || y > world.size;
 }
 
 export function isPickupExpired(pickup: Pickup, t: number): boolean {

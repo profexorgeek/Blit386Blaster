@@ -19,6 +19,7 @@ import { BT, bootstrap, Vector2i } from 'blit386';
 import {
     APP_ID,
     BOUNCE_RESTITUTION,
+    BULLET_LIFE,
     BULLET_SPEED,
     FIRE_COOLDOWN,
     HUD_BOTTOM,
@@ -37,7 +38,7 @@ import {
     SHIP_SEND_INTERVAL,
     SHIP_STRAFE_ACCEL,
     START_HEALTH,
-    WORLD_SIZE,
+    WORLD_MIN,
 } from './constants.ts';
 import { circle, circleFill, convexPolygon, line, pixel, rectFill, text, textCentered, textWidth } from './draw.ts';
 import { Leaderboard } from './leaderboard.ts';
@@ -57,6 +58,7 @@ import {
     rockHitRadius,
     rockMotion,
     segmentHitsCircle,
+    world,
 } from './world.ts';
 
 const PLAY_TOP = HUD_TOP;
@@ -99,8 +101,8 @@ class Game {
     prevY = 0;
 
     /** Camera top-left in world pixels. */
-    camX = WORLD_SIZE / 2 - VIEW_CENTER_X;
-    camY = WORLD_SIZE / 2 - VIEW_CENTER_Y;
+    camX = WORLD_MIN / 2 - VIEW_CENTER_X;
+    camY = WORLD_MIN / 2 - VIEW_CENTER_Y;
     drift = { x: 14, y: 9 };
 
     fireCooldown = 0;
@@ -145,6 +147,7 @@ class Game {
             healed: () => {
                 this.ship.hp = Math.min(this.ship.maxHp, this.ship.hp + 1);
             },
+            enemyFired: (bullet) => this.hitTestWhileHidden(bullet),
         });
         void this.session.start();
 
@@ -177,6 +180,7 @@ class Game {
                         y: Math.round(p.dy),
                         hp: p.hp,
                     })),
+                    worldSize: world.size,
                     rocks: this.session.rocks.size,
                     pickups: this.session.pickups.size,
                     bullets: this.session.bullets.length,
@@ -230,14 +234,16 @@ class Game {
 
     private spawn(): void {
         const s = this.ship;
-        let x = WORLD_SIZE / 2;
-        let y = WORLD_SIZE / 2;
+        const size = world.size;
+        const margin = Math.min(200, size * 0.15);
+        let x = size / 2;
+        let y = size / 2;
 
         for (let attempt = 0; attempt < 60; attempt++) {
-            x = randomRange(200, WORLD_SIZE - 200);
-            y = randomRange(200, WORLD_SIZE - 200);
+            x = randomRange(margin, size - margin);
+            y = randomRange(margin, size - margin);
 
-            if (this.session.isClearOfShips(x, y, 300) && this.isClearOfRocks(x, y, 80)) {
+            if (this.session.isClearOfShips(x, y, Math.min(300, size * 0.35)) && this.isClearOfRocks(x, y, 40)) {
                 break;
             }
         }
@@ -356,16 +362,16 @@ class Game {
         if (s.x < r) {
             s.x = r;
             s.vx = Math.abs(s.vx) * BOUNCE_RESTITUTION;
-        } else if (s.x > WORLD_SIZE - r) {
-            s.x = WORLD_SIZE - r;
+        } else if (s.x > world.size - r) {
+            s.x = world.size - r;
             s.vx = -Math.abs(s.vx) * BOUNCE_RESTITUTION;
         }
 
         if (s.y < r) {
             s.y = r;
             s.vy = Math.abs(s.vy) * BOUNCE_RESTITUTION;
-        } else if (s.y > WORLD_SIZE - r) {
-            s.y = WORLD_SIZE - r;
+        } else if (s.y > world.size - r) {
+            s.y = world.size - r;
             s.vy = -Math.abs(s.vy) * BOUNCE_RESTITUTION;
         }
     }
@@ -466,9 +472,14 @@ class Game {
                 continue;
             }
 
+            // Test everything the bullet covered since we last looked. A bullet whose "fire" message arrived late
+            // is already partway along its path, and that first stretch must be tested too, or it can fly
+            // straight through a ship without ever touching it in a single tick.
             const now = bulletPos(bullet, t, this.motion);
-            const before = bulletPos(bullet, Math.max(bullet.t0, t - TICK), prev);
+            const before = bulletPos(bullet, Math.max(bullet.t0, bullet.checkedUntil ?? bullet.t0), prev);
             const isMine = bullet.owner === selfId;
+
+            bullet.checkedUntil = t;
 
             const rock = this.findRockOnSegment(before.x, before.y, now.x, now.y, t);
 
@@ -496,6 +507,27 @@ class Game {
             if (s.alive && t >= this.shieldUntil && segmentHitsCircle(before.x, before.y, now.x, now.y, s.x, s.y, SHIP_RADIUS + 1)) {
                 this.takeHit(bullet);
             }
+        }
+    }
+
+    /**
+     * The game loop stops while the tab is in the background, but relayed messages still arrive. Our ship sits
+     * still meanwhile, so an enemy bullet's whole remaining path can be tested the moment it is fired; otherwise a
+     * player could dodge everything by switching tabs.
+     */
+    private hitTestWhileHidden(bullet: Bullet): void {
+        const s = this.ship;
+        const t = this.session.now();
+
+        if (!document.hidden || !s.alive || t < this.shieldUntil) {
+            return;
+        }
+
+        const start = bulletPos(bullet, Math.max(bullet.t0, t), { x: 0, y: 0, vx: 0, vy: 0 });
+        const end = bulletPos(bullet, bullet.t0 + BULLET_LIFE, { x: 0, y: 0, vx: 0, vy: 0 });
+
+        if (segmentHitsCircle(start.x, start.y, end.x, end.y, s.x, s.y, SHIP_RADIUS + 1)) {
+            this.takeHit(bullet);
         }
     }
 
@@ -597,11 +629,11 @@ class Game {
         this.camX += this.drift.x * TICK;
         this.camY += this.drift.y * TICK;
 
-        if (this.camX < -40 || this.camX > WORLD_SIZE - SCREEN_W + 40) {
+        if (this.camX < -40 || this.camX > world.size - SCREEN_W + 40) {
             this.drift.x = -this.drift.x;
         }
 
-        if (this.camY < -40 || this.camY > WORLD_SIZE - SCREEN_H + 40) {
+        if (this.camY < -40 || this.camY > world.size - SCREEN_H + 40) {
             this.drift.y = -this.drift.y;
         }
     }
@@ -766,8 +798,8 @@ class Game {
     private drawBoundary(cx: number, cy: number): void {
         const left = -cx;
         const top = -cy;
-        const right = WORLD_SIZE - cx;
-        const bottom = WORLD_SIZE - cy;
+        const right = world.size - cx;
+        const bottom = world.size - cy;
         const clampX = (x: number) => Math.max(-1, Math.min(SCREEN_W, x));
         const clampY = (y: number) => Math.max(-1, Math.min(SCREEN_H, y));
 
@@ -875,21 +907,31 @@ class Game {
             }
         }
 
-        // Bottom band: kill count, plus the occasional kill notice or connection note.
+        // Bottom band: kill count on the left, world position in the middle, notices on the right.
         const top = SCREEN_H - HUD_BOTTOM;
 
         rectFill(0, top, SCREEN_W, HUD_BOTTOM, C.HUD_BG);
         line(0, top, SCREEN_W - 1, top, C.HUD_LINE);
         text(4, top + 1, C.TEXT, `KILLS ${this.ship.kills}`);
 
+        const [wx, wy] = this.ship.alive
+            ? [this.ship.x, this.ship.y]
+            : [this.camX + VIEW_CENTER_X, this.camY + VIEW_CENTER_Y];
+
+        textCentered(SCREEN_W / 2, top + 1, C.TEXT_DIM, `${Math.round(wx)}, ${Math.round(wy)}`);
+
+        let note = '';
+        let noteColor: number = C.TEXT;
+
         if (performance.now() < this.toastUntil) {
-            textCentered(SCREEN_W / 2, top + 1, C.TEXT, this.toast);
+            note = this.toast;
+        } else if (this.session.status !== 'online') {
+            note = this.session.status === 'connecting' ? 'CONNECTING' : 'OFFLINE';
+            noteColor = C.TEXT_DIM;
         }
 
-        if (this.session.status !== 'online') {
-            const note = this.session.status === 'connecting' ? 'CONNECTING' : 'OFFLINE';
-
-            text(SCREEN_W - 4 - textWidth(note), top + 1, C.TEXT_DIM, note);
+        if (note) {
+            text(SCREEN_W - 4 - textWidth(note), top + 1, noteColor, note);
         }
     }
 

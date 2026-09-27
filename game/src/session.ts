@@ -4,9 +4,8 @@ import {
     ROCK_SIZES,
     ROCK_SPAWN_CLEARANCE,
     ROCK_SPAWN_INTERVAL,
-    ROCK_TARGET_MASS,
     SNAPSHOT_INTERVAL,
-    WORLD_SIZE,
+    WORLD_SHRINK_DELAY,
 } from './constants.ts';
 import { RelayClient } from './net.ts';
 import { allocPlayerColor, freePlayerColor, setPlayerColor } from './palette.ts';
@@ -23,7 +22,10 @@ import {
     rockFromWire,
     rockMotion,
     rockShape,
+    rockTargetMass,
     rockToWire,
+    world,
+    worldSizeFor,
 } from './world.ts';
 
 // The multiplayer layer. Authority is split so nobody waits on a round trip for things they feel directly:
@@ -58,7 +60,8 @@ type GameMessage =
     | { k: 'bump'; rock: RockWire }
     | { k: 'hurt'; bullet: string }
     | { k: 'died'; by: string; x: number; y: number }
-    | { k: 'world'; rocks: RockWire[]; pickups: PickupWire[] }
+    /** Full state from the host. `s` is the world size; the rocks' paths are already expressed for it. */
+    | { k: 'world'; s: number; rocks: RockWire[]; pickups: PickupWire[] }
     | { k: 'rocks'; set: RockWire[]; gone: string[] }
     | { k: 'pickup'; p: PickupWire }
     | { k: 'claim'; id: string }
@@ -117,6 +120,8 @@ export interface LocalEvents {
     scoredKill(victimName: string): void;
     /** The host confirmed we grabbed a pickup: refill one empty circle, never add a new one. */
     healed(): void;
+    /** Someone fired; the game hit-tests it right away if its own loop is paused (a background tab). */
+    enemyFired(bullet: Bullet): void;
 }
 
 const scratch: Motion = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -128,6 +133,9 @@ export class Session {
     pickups = new Map<string, Pickup>();
     bullets: Bullet[] = [];
 
+    /** `?room=name` in the address puts you in your own set of rooms (private games, automated tests). */
+    private readonly roomPrefix = new URLSearchParams(window.location.search).get('room') ?? undefined;
+
     /** False until we have a world: either we are the host, or the host has sent us its snapshot. */
     hasWorld = false;
     status: 'connecting' | 'online' | 'offline' = 'connecting';
@@ -135,6 +143,8 @@ export class Session {
     private nextId = 0;
     private spawnTimer = 0;
     private snapshotTimer = 0;
+    /** Seconds the player count has been asking for a smaller world. */
+    private shrinkTimer = 0;
     private readonly pendingClaims = new Set<string>();
     /** Host rock changes waiting to go out together, so a busy fight stays under the relay's rate limit. */
     private readonly outgoingRocks = new Map<string, Rock>();
@@ -173,7 +183,7 @@ export class Session {
     /** Connects, falling back to a solo world if the relay is unreachable, and keeps retrying in the background. */
     async start(): Promise<void> {
         try {
-            await this.relay.connect();
+            await this.relay.connect(this.roomPrefix);
             this.status = 'online';
         } catch (error) {
             console.warn('[session] playing offline:', error);
@@ -247,7 +257,7 @@ export class Session {
     private scheduleReconnect(): void {
         window.setTimeout(async () => {
             try {
-                await this.relay.connect();
+                await this.relay.connect(this.roomPrefix);
             } catch {
                 this.scheduleReconnect();
             }
@@ -320,8 +330,8 @@ export class Session {
                 break;
             }
 
-            case 'fire':
-                this.bullets.push({
+            case 'fire': {
+                const bullet: Bullet = {
                     id: message.id,
                     owner: from,
                     x0: message.x,
@@ -330,8 +340,12 @@ export class Session {
                     vy: message.vy,
                     t0: message.ts,
                     dead: false,
-                });
+                };
+
+                this.bullets.push(bullet);
+                this.events.enemyFired(bullet);
                 break;
+            }
 
             case 'hitRock': {
                 this.killBullet(message.bullet);
@@ -388,6 +402,7 @@ export class Session {
             }
 
             case 'world':
+                world.size = message.s;
                 this.rocks = new Map(message.rocks.map((wire) => [wire[0], rockFromWire(wire, this.rocks.get(wire[0]))]));
                 this.pickups = new Map(message.pickups.map((p) => [p[0], pickupFromWire(p)]));
                 this.hasWorld = true;
@@ -586,7 +601,7 @@ export class Session {
     private hostUpdate(dt: number): void {
         this.spawnTimer -= dt;
 
-        if (this.spawnTimer <= 0 && this.rockMass() < ROCK_TARGET_MASS) {
+        if (this.spawnTimer <= 0 && this.rockMass() < rockTargetMass(world.size)) {
             this.spawnTimer = ROCK_SPAWN_INTERVAL;
 
             const rock = this.spawnRock(this.now(), true);
@@ -596,6 +611,7 @@ export class Session {
             }
         }
 
+        this.updateWorldSize(dt);
         this.snapshotTimer -= dt;
 
         if (this.snapshotTimer <= 0) {
@@ -608,13 +624,63 @@ export class Session {
         }
     }
 
+    /** Grows the world as soon as players join; shrinks it only after the smaller count has held for a while. */
+    private updateWorldSize(dt: number): void {
+        const wanted = worldSizeFor(this.players.size + 1);
+
+        if (wanted > world.size) {
+            this.resizeWorld(wanted);
+            this.shrinkTimer = 0;
+        } else if (wanted < world.size) {
+            this.shrinkTimer += dt;
+
+            if (this.shrinkTimer >= WORLD_SHRINK_DELAY) {
+                this.resizeWorld(wanted);
+                this.shrinkTimer = 0;
+            }
+        } else {
+            this.shrinkTimer = 0;
+        }
+    }
+
+    /**
+     * Host only. Every rock path depends on the world size (it bounces off the edges), so each rock is restarted
+     * from where it is right now. Rocks and pickups left outside a shrunken world are removed. Then everyone gets
+     * the new world in one snapshot.
+     */
+    private resizeWorld(size: number): void {
+        const t = this.now();
+
+        for (const [id, rock] of this.rocks) {
+            const m = rockMotion(rock, t, scratch);
+            const r = ROCK_SIZES[rock.size].radius;
+
+            if (m.x > size - r || m.y > size - r) {
+                this.rocks.delete(id);
+                continue;
+            }
+
+            Object.assign(rock, { x0: m.x, y0: m.y, vx: m.vx, vy: m.vy, t0: t });
+        }
+
+        for (const [id, pickup] of this.pickups) {
+            if (pickup.x > size || pickup.y > size) {
+                this.pickups.delete(id);
+            }
+        }
+
+        world.size = size;
+        this.send(this.worldSnapshot());
+    }
+
     private seedWorld(): void {
         const t = this.now();
 
+        world.size = worldSizeFor(this.players.size + 1);
         this.rocks.clear();
         this.pickups.clear();
 
-        while (this.rockMass() < ROCK_TARGET_MASS) {
+        while (this.rockMass() < rockTargetMass(world.size)) {
             this.spawnRock(t, false);
         }
     }
@@ -634,10 +700,12 @@ export class Session {
         const { radius, minSpeed, maxSpeed } = ROCK_SIZES[3];
 
         for (let attempt = 0; attempt < 20; attempt++) {
-            const x = randomRange(radius, WORLD_SIZE - radius);
-            const y = randomRange(radius, WORLD_SIZE - radius);
+            const x = randomRange(radius, world.size - radius);
+            const y = randomRange(radius, world.size - radius);
+            // In a small world "far from every ship" may not exist, so the clearance shrinks with it.
+            const clearance = Math.min(ROCK_SPAWN_CLEARANCE, world.size * 0.3);
 
-            if (awayFromShips && !this.isClearOfShips(x, y, ROCK_SPAWN_CLEARANCE)) {
+            if (awayFromShips && !this.isClearOfShips(x, y, clearance)) {
                 continue;
             }
 
@@ -708,8 +776,8 @@ export class Session {
 
             for (const side of [-1, 1]) {
                 const speed = randomRange(child.minSpeed, child.maxSpeed);
-                const x = clamp(at.x + px * side * child.radius * 0.8, child.radius, WORLD_SIZE - child.radius);
-                const y = clamp(at.y + py * side * child.radius * 0.8, child.radius, WORLD_SIZE - child.radius);
+                const x = clamp(at.x + px * side * child.radius * 0.8, child.radius, world.size - child.radius);
+                const y = clamp(at.y + py * side * child.radius * 0.8, child.radius, world.size - child.radius);
                 const piece = this.makeRock(
                     rock.size - 1,
                     x,
@@ -776,6 +844,7 @@ export class Session {
     private worldSnapshot(): GameMessage {
         return {
             k: 'world',
+            s: world.size,
             rocks: [...this.rocks.values()].map(rockToWire),
             pickups: [...this.pickups.values()].map(pickupToWire),
         };
