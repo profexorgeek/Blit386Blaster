@@ -5,6 +5,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Blit386Blaster</title>
+        <meta name="description" content="Multiplayer asteroids in the browser, built with the BLIT386 engine. By Justin Johnson." />
         <link rel="icon" href="data:," />
         <style>
             *,
@@ -13,41 +14,78 @@
                 box-sizing: border-box;
             }
 
+            :root {
+                --bg: #07080d;
+                --panel: #0e0f16;
+                --line: #282a38;
+                --text: #e4e6f0;
+                --dim: #8a8ea2;
+                --red: #e82634;
+                --header-h: 56px;
+                --gap: 16px;
+                --info-w: 300px;
+                /* Space the canvas may use; the rules below keep its aspect ratio inside it. */
+                --avail-w: calc(100vw - var(--info-w) - var(--gap) * 3);
+                --avail-h: calc(100dvh - var(--header-h) - var(--gap) * 2);
+                color-scheme: dark;
+            }
+
             html,
             body {
                 margin: 0;
-                height: 100%;
-                overflow: hidden;
+                background: var(--bg);
+                color: var(--text);
+                font: 14px/1.55 ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
             }
 
-            body {
-                background: black;
+            header {
+                height: var(--header-h);
+                display: flex;
+                align-items: baseline;
+                gap: 12px;
+                padding: 16px var(--gap) 0;
+            }
+
+            h1 {
+                margin: 0;
+                font-size: 20px;
+                letter-spacing: 0.08em;
+            }
+
+            .byline {
+                color: var(--dim);
+            }
+
+            .layout {
+                display: grid;
+                grid-template-columns: 1fr var(--info-w);
+                gap: var(--gap);
+                padding: var(--gap);
+                align-items: start;
             }
 
             #canvas-container {
-                width: 100dvw;
-                height: 100dvh;
                 display: flex;
-                align-items: center;
                 justify-content: center;
             }
 
             /*
-             * Scale the pixel canvas up to fill the window while keeping its aspect ratio and staying crisp.
-             * The engine sets the --canvas-* custom properties; the fallbacks here keep things sensible if it does not.
+             * Scale the pixel canvas up to fill its space while keeping its aspect ratio and staying crisp.
+             * The engine sets the --canvas-* custom properties; the fallbacks keep things sensible if it does not.
              */
             #canvas-container canvas {
                 display: block;
                 image-rendering: pixelated;
+                border: 1px solid var(--line);
                 width: min(
-                    100dvw,
-                    calc(100dvh * var(--canvas-aspect-w, 640) / var(--canvas-aspect-h, 480)),
-                    var(--canvas-max-w, 1280px)
+                    var(--avail-w),
+                    calc(var(--avail-h) * var(--canvas-aspect-w, 16) / var(--canvas-aspect-h, 9)),
+                    var(--canvas-max-w, 1920px)
                 );
                 height: min(
-                    100dvh,
-                    calc(100dvw * var(--canvas-aspect-h, 480) / var(--canvas-aspect-w, 640)),
-                    var(--canvas-max-h, 960px)
+                    var(--avail-h),
+                    calc(var(--avail-w) * var(--canvas-aspect-h, 9) / var(--canvas-aspect-w, 16)),
+                    var(--canvas-max-h, 1080px)
                 );
             }
 
@@ -56,11 +94,204 @@
                     image-rendering: crisp-edges;
                 }
             }
+
+            .info {
+                display: grid;
+                gap: var(--gap);
+            }
+
+            section {
+                background: var(--panel);
+                border: 1px solid var(--line);
+                padding: 12px 14px;
+            }
+
+            h2 {
+                margin: 0 0 6px;
+                font-size: 13px;
+                letter-spacing: 0.1em;
+                color: var(--dim);
+            }
+
+            p,
+            ul {
+                margin: 0;
+            }
+
+            p + p,
+            p + form,
+            form + p {
+                margin-top: 8px;
+            }
+
+            ul {
+                padding-left: 18px;
+            }
+
+            kbd,
+            code {
+                font: inherit;
+                background: var(--bg);
+                border: 1px solid var(--line);
+                padding: 0 4px;
+            }
+
+            .note {
+                border-color: var(--red);
+            }
+
+            form {
+                display: flex;
+                gap: 6px;
+            }
+
+            input,
+            button {
+                font: inherit;
+                color: var(--text);
+                background: var(--bg);
+                border: 1px solid var(--line);
+                padding: 4px 8px;
+                min-width: 0;
+            }
+
+            input {
+                flex: 1;
+            }
+
+            button {
+                cursor: pointer;
+            }
+
+            button:hover,
+            input:focus {
+                border-color: var(--dim);
+                outline: none;
+            }
+
+            a {
+                color: var(--text);
+            }
+
+            /* Narrow screens: the canvas takes the full width and the notes go underneath. */
+            @media (max-width: 960px) {
+                :root {
+                    --avail-w: calc(100vw - var(--gap) * 2);
+                }
+
+                .layout {
+                    grid-template-columns: 1fr;
+                }
+            }
         </style>
     </head>
 
     <body>
-        <div id="canvas-container"><canvas id="blit386-canvas"></canvas></div>
+        <header>
+            <h1>BLIT386BLASTER</h1>
+            <span class="byline">By Justin Johnson</span>
+        </header>
+
+        <div class="layout">
+            <div id="canvas-container"><canvas id="blit386-canvas"></canvas></div>
+
+            <div class="info">
+                <section class="note">
+                    <h2>SERVER WAKE-UP</h2>
+                    <p>
+                        The multiplayer server starts on demand. If nobody has played for a while it is asleep, and
+                        waking it can take about a minute. Meanwhile you can fly solo; the game joins everyone else as
+                        soon as the server is up (the bottom bar shows <code>OFFLINE</code> until then).
+                    </p>
+                </section>
+
+                <section>
+                    <h2>CONTROLS</h2>
+                    <ul>
+                        <li>Click the game, then click or press <kbd>Space</kbd> to launch</li>
+                        <li><kbd>W</kbd> <kbd>S</kbd> thrust toward / away from the crosshair</li>
+                        <li><kbd>A</kbd> <kbd>D</kbd> strafe</li>
+                        <li>Mouse to aim, left click or <kbd>Space</kbd> to fire</li>
+                        <li><kbd>R</kbd> on the title screen for a new name and color</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h2>RULES</h2>
+                    <p>
+                        Rocks take three hits per size and split twice. The smallest pieces drop red health circles
+                        that refill empty health. Enemy hits cost one circle; each kill adds a new one (up to 10). When
+                        you die, your kills go on a leaderboard that forgets scores after five minutes.
+                    </p>
+                </section>
+
+                <section>
+                    <h2>PRIVATE ROOMS</h2>
+                    <p>
+                        Add <code>?room=yourname</code> to the address to play in your own room. Anyone who opens the
+                        same address joins you. Letters, numbers, <code>-</code> and <code>_</code> only.
+                    </p>
+                    <form id="room-form">
+                        <input id="room-input" name="room" placeholder="room name" maxlength="28" autocomplete="off" />
+                        <button type="submit">Join</button>
+                    </form>
+                    <p id="room-status"></p>
+                </section>
+
+                <section>
+                    <h2>TWO PLAYERS, ONE BROWSER</h2>
+                    <p>
+                        Tabs share your saved name, so they would be the same pilot. Add <code>?profile=2</code> for a
+                        second identity: <a id="second-player" href="?profile=2" target="_blank">open a second
+                        player</a>. Put the windows side by side; browsers pause games in hidden tabs.
+                    </p>
+                </section>
+            </div>
+        </div>
+
+        <script>
+            // Page helpers: join a room by name, and open a second player in the same room.
+            // Room names are cleaned the same way the game does it (src/session.ts, roomFromAddress).
+            const cleanRoom = (raw) =>
+                raw
+                    .toLowerCase()
+                    .replace(/[^a-z0-9_-]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .slice(0, 28);
+            const params = new URLSearchParams(window.location.search);
+            const room = cleanRoom(params.get('room') ?? '');
+            const status = document.getElementById('room-status');
+            const input = document.getElementById('room-input');
+
+            status.textContent = room ? `You are in room "${room}".` : 'You are in the public rooms.';
+
+            if (room) {
+                input.value = room;
+            }
+
+            // Typing a room name should not also fly the ship.
+            input.addEventListener('keydown', (event) => event.stopPropagation());
+
+            document.getElementById('room-form').addEventListener('submit', (event) => {
+                event.preventDefault();
+
+                const next = new URLSearchParams(window.location.search);
+                const name = cleanRoom(input.value);
+
+                if (name) {
+                    next.set('room', name);
+                } else {
+                    next.delete('room');
+                }
+
+                window.location.search = next.toString();
+            });
+
+            const second = new URLSearchParams(window.location.search);
+
+            second.set('profile', second.get('profile') === '2' ? '3' : '2');
+            document.getElementById('second-player').href = `?${second.toString()}`;
+        </script>
         <script type="module" src="/src/game.ts"></script>
     </body>
 </html>
