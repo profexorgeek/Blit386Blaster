@@ -1,0 +1,18 @@
+# Render Blueprint: in the Render dashboard choose New > Blueprint and pick this repo.
+# The relay runs on the free plan, which sleeps after 15 idle minutes and takes about a minute to wake.
+services:
+  - type: web
+    name: blit386blaster-relay
+    runtime: node
+    plan: free
+    rootDir: relay
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.ts
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: HOST
+        value: 0.0.0.0
+      - key: RELAY_CONFIG
+        value: config.render.json

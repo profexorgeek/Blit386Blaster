@@ -1,0 +1,22 @@
+{
+    "allowedOrigins": [
+        "https://justindjohnson.com",
+        "https://www.justindjohnson.com",
+        "https://airpigengine.com",
+        "https://www.airpigengine.com",
+        "http://localhost:*",
+        "http://127.0.0.1:*"
+    ],
+    "trustProxy": true,
+    "dataDir": "./data",
+    "maxMessageBytes": 262144,
+    "maxPeersPerRoom": 32,
+    "messagesPerSecond": 100,
+    "messageBurst": 200,
+    "apps": {
+        "blit386blaster": {
+            "scoreboard": { "ttlSeconds": 300, "keep": 10 },
+            "maxPeersPerRoom": 24
+        }
+    }
+}

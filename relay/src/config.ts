@@ -55,8 +55,13 @@ export function loadConfig(path: string): RelayConfig {
 
     config.dataDir = resolve(dirname(path), config.dataDir);
 
+    // Hosting platforms (Render, Fly.io, ...) choose the port and need the server on every interface.
     if (process.env.PORT) {
         config.port = Number(process.env.PORT);
+    }
+
+    if (process.env.HOST) {
+        config.host = process.env.HOST;
     }
 
     for (const [name, app] of Object.entries(config.apps)) {
