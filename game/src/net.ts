@@ -44,10 +44,13 @@ export class RelayClient {
         return !this.isConnected || this.selfId === this.hostId;
     }
 
-    /** Joins the first room with space: `1`, then `2`, and so on. Rejects if the relay cannot be reached. */
-    async connect(): Promise<void> {
+    /**
+     * Joins the first room with space: `1`, then `2`, and so on. With a `prefix` (for private games or tests) the
+     * rooms are `<prefix>-1`, `<prefix>-2`, ... Rejects if the relay cannot be reached.
+     */
+    async connect(prefix?: string): Promise<void> {
         for (let room = 1; room <= MAX_ROOMS_TO_TRY; room++) {
-            const result = await this.tryRoom(String(room));
+            const result = await this.tryRoom(prefix ? `${prefix}-${room}` : String(room));
 
             if (result === 'joined') {
                 return;
