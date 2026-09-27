@@ -5,9 +5,21 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
-    "lib": ["ESNext", "DOM"],
-    "types": []
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }
