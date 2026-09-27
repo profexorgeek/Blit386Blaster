@@ -68,7 +68,26 @@ node scripts/check.ts ws://localhost:8787 blit386blaster
 
 Needs Node 22.18 or newer, which runs the TypeScript sources directly (no build step).
 
-## Deploy to the DreamHost VPS (relay.airpigengine.com)
+## Deploy to Render (free)
+
+The repo root has a [`render.yaml`](../render.yaml) Blueprint for a free Render web service.
+
+1. Push the repo to GitHub (done for this repo).
+2. In the [Render dashboard](https://dashboard.render.com), choose **New > Blueprint**, connect GitHub, and pick the
+   repo. Render reads `render.yaml`, builds `relay/` with `npm ci --omit=dev`, and starts `node src/server.ts` on Node 24
+   with [`config.render.json`](config.render.json).
+3. Note the service URL Render shows, e.g. `https://blit386blaster-relay.onrender.com`. If it differs, update
+   `game/.env.production` (`wss://` + the same host) and rebuild the game.
+4. Check it from your machine: `node scripts/check.ts wss://blit386blaster-relay.onrender.com blit386blaster`.
+   Three `OK` lines means it works.
+
+What to expect on the free plan: the service sleeps after 15 minutes without traffic and takes about a minute to wake on
+the next visit. The game plays solo while it wakes and joins as soon as it is up. The disk is not kept across restarts,
+so the scoreboard resets when it sleeps, which hardly matters when scores expire after five minutes anyway.
+
+To allow another site to embed the game, add its origin to `allowedOrigins` in `config.render.json` and push.
+
+## Deploy to your own server (e.g. the DreamHost VPS at relay.airpigengine.com)
 
 The plan: the relay listens on `127.0.0.1:8787` (not reachable from outside), and the web server in front of it handles
 HTTPS for `relay.airpigengine.com` and forwards to it. Browsers on justindjohnson.com then connect to

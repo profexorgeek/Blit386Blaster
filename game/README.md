@@ -26,8 +26,9 @@ the background.
 Address options (combine with `&`):
 
 - `?profile=2` keeps a separate player identity, so two tabs in one browser are two players.
-- `?room=name` plays in your own set of rooms instead of the public ones.
-- `?relay=wss://relay.airpigengine.com` points any build at a different relay.
+- `?room=name` plays in your own set of rooms instead of the public ones. Names are lowercased, and anything other
+  than letters, digits, `-` and `_` becomes `-` (the page's room box does the same).
+- `?relay=wss://some-other-relay.example` points any build at a different relay.
 
 The world is 500x500 for one player and grows by 250 px per extra player, up to 5000x5000.
 
@@ -41,14 +42,15 @@ npx blit play --help # scripted single-player play-tests with screenshots
 
 In dev builds, `window.__game.state()` summarizes the game, and `window.__game.game` is the live game object.
 
-## Deploy to justindjohnson.com
+## Deploy
 
 ```bash
 npm run build
 ```
 
-This writes a static site to `dist/` that connects to `wss://relay.airpigengine.com` (set in `.env.production`). Paths
-are relative, so upload the contents of `dist/` to any folder, for example:
+This writes a static site to `dist/` that connects to the relay URL in `.env.production` (the Render service from
+[`render.yaml`](../render.yaml); see [`relay/README.md`](../relay/README.md)). Paths are relative, so upload the
+contents of `dist/` to any folder, for example on justindjohnson.com:
 
 ```bash
 rsync -av --delete dist/ USER@YOUR_VPS:~/justindjohnson.com/games/blit386blaster/
