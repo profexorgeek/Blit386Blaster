@@ -1,0 +1,24 @@
+{
+    "name": "relay",
+    "version": "0.1.0",
+    "private": true,
+    "description": "A tiny, game-agnostic WebSocket relay with rooms, host election, time sync, and expiring scoreboards.",
+    "type": "module",
+    "engines": {
+        "node": ">=22.18.0"
+    },
+    "scripts": {
+        "start": "node src/server.ts",
+        "dev": "RELAY_CONFIG=config.example.json node --watch src/server.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "node --test \"test/**/*.test.ts\""
+    },
+    "dependencies": {
+        "ws": "^8.22.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "@types/ws": "^8.18.1",
+        "typescript": "^7.0.2"
+    }
+}
