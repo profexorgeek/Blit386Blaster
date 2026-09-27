@@ -1,82 +1,77 @@
-# game
+# Rockheal
 
-A little pixel game built with [BLIT386](https://www.npmjs.com/package/blit386).
+Multiplayer asteroids where breaking rocks heals you. Built with [BLIT386](https://blit386.dev).
 
-## Run it
+- **WASD** to fly: W/S thrust toward or away from the cursor, A/D strafe.
+- **Mouse** to aim: the ship always points at the red crosshair.
+- **Left click** (or Space) to fire.
+- Every rock takes 3 hits per size and splits twice. The smallest pieces drop a red health circle.
+- An enemy bullet costs one health circle. Each kill gives one back (10 at most).
+- When you die, your kill count goes on a leaderboard that forgets scores after 5 minutes.
+- **R** on the title screen gives you a new random name and color.
 
-You need [Node.js](https://nodejs.org) installed once (download the big LTS button). Then, in this folder:
+## Run it locally
+
+Start the relay in one terminal, then the game in another:
 
 ```bash
-npm install
-npm run dev
+cd ../relay && npm install && npm run dev
+cd ../game && npm install && npm run dev
 ```
 
-A web address like `http://localhost:5173` appears. Open it in your browser to play.
+Open the printed address in two browser windows to play against yourself. In development the game connects to
+`ws://localhost:8787` (set in `.env.development`). If it cannot reach a relay it still runs, solo, and keeps retrying in
+the background.
 
-- Phone or tablet: tap or drag - the paddle follows your finger.
-- Computer: move the mouse to steer the paddle, or use the left and right arrow keys (or A and D) as a fallback.
+Add `?relay=wss://relay.airpigengine.com` to the address to point any build at a different relay.
 
-Catch the falling blocks before they reach the bottom.
+## Test
 
-## Change the game
+```bash
+npm run typecheck
+npm run test:mp      # two headless browsers against the local relay: hits, kills, healing, leaderboard, host hand-over
+npx blit play --help # scripted single-player play-tests with screenshots
+```
 
-Open `src/game.ts`. Every line has a comment explaining what it does. Change a number or a color, save the file, and
-your browser updates by itself - most edits keep the game running (hot reload) instead of wiping your score. Edit a PNG
-or sound under `public/` and that asset updates in place too. A few things to try:
+In dev builds, `window.__game.state()` summarizes the game, and `window.__game.game` is the live game object.
 
-- Make the blocks fall faster: find `ITEM_FALL_SPEED`.
-- Make the paddle wider or narrower: `PADDLE_WIDTH`.
-- Change the colors: the `palette.set(...)` lines in `init`.
-
-More about hot reload: `docs/hot-reload.md`.
-
-## Helpful commands
-
-- `npm run dev` - start the game (the everyday command).
-- `npx blit run` - the same thing, the friendly way.
-- `npx blit play` - play-test the game from the terminal and print its state (`npx blit play --help` for the steps).
-- `npx blit doctor` - check your setup if something seems off.
-- `npx blit upgrade` - update BLIT386 to the latest version.
-
-The `blit` helper is installed inside this project, not on your whole computer, so it needs `npx` in front (it means
-"run the helper that lives in this project"). Typing plain `blit` would say "command not found."
-
-## Peek behind the scenes
-
-While the game runs, you can open the engine overlay - a small panel showing frames per second and which renderer is
-active.
-
-- Keyboard: press the key just below Esc, in the very top-left corner of your keyboard. On US keyboards it is printed
-  with `` ` `` and `~`. Classic PC games like Quake used that exact key to open their command console, and BLIT386 keeps
-  the tradition. The engine listens for the key's position, not the symbol printed on it - on some keyboard layouts the
-  `~` symbol sits somewhere else entirely, but the overlay key is still the one below Esc.
-- No keyboard, or can't find the key? Click or tap the bottom-left corner of the game screen instead. That works
-  everywhere: phones, tablets, the Steam Deck.
-
-## Share your game
-
-When you want to show your game to a friend:
+## Deploy to justindjohnson.com
 
 ```bash
 npm run build
 ```
 
-This packs everything into a `dist/` folder - a plain website, no server needed. Drag that folder onto a free static
-host such as [Netlify Drop](https://app.netlify.com/drop) or [Cloudflare Pages](https://pages.cloudflare.com), and you
-get a link anyone can open.
+This writes a static site to `dist/` that connects to `wss://relay.airpigengine.com` (set in `.env.production`). Paths
+are relative, so upload the contents of `dist/` to any folder, for example:
 
-## When something breaks
+```bash
+rsync -av --delete dist/ USER@YOUR_VPS:~/justindjohnson.com/games/rockheal/
+```
 
-It will - that is normal. Open `docs/when-something-breaks.md`. It explains how to read error messages and walks through
-the usual suspects: blank screens, "command not found," forgotten `await`, and more.
+## How the multiplayer works
 
-## Learn more
+There is no game server, only the [relay](../relay), which passes messages between players. Authority is split so nobody
+waits on a round trip for what they feel directly:
 
-- `AGENTS.md` - a short home base for you or an AI assistant.
-- `docs/` - nine friendly guides: getting started, the game loop, drawing, input, colors, randomness and world
-  generation, sound, hot reload, and fixing problems.
-- [blit386.dev](https://blit386.dev) - the full BLIT386 documentation site. If you set up Claude Code or Cursor, it can
-  search this site directly - that is what the `.mcp.json` file here (Claude Code) or `.cursor/mcp.json` (Cursor) is
-  for.
-- [blit386.dev/llms.txt](https://blit386.dev/llms.txt) - the whole site's contents as one plain text file, handy for
-  skimming or pasting into a chat.
+- **Your ship is yours.** You move it and broadcast it 20 times a second. You decide when an enemy bullet hits it.
+- **Your bullets are yours.** You decide when they hit a rock and tell everyone.
+- **The host owns the rock field.** The longest-connected player applies rock damage, splits rocks, spawns new ones, and
+  decides who grabbed a pickup first. When they leave, the next player already has the same field and takes over.
+
+Rocks and bullets are sent once, as "here at time t, moving this fast", and every client works out where they are now
+from a clock shared through the relay (wall bounces included). A rock only needs a new message when something changes
+its path: a hit, a split, or a ship shoving it.
+
+| File | What it does |
+| --- | --- |
+| `src/game.ts` | Local ship, input, collisions, particles, rendering, HUD, title and death screens |
+| `src/session.ts` | Who owns what, and every multiplayer message |
+| `src/net.ts` | Relay connection, room selection, clock sync (game-agnostic) |
+| `src/world.ts` | Rocks, bullets, and pickups as shared-clock trajectories |
+| `src/constants.ts` | Every tuning number |
+| `src/palette.ts` | Color slots; each player gets a palette block for their ship color |
+| `src/sprites.ts` | The 8x8 ship, rasterized at 16 angles (the engine cannot rotate sprites) |
+| `src/draw.ts` | Circles and filled convex polygons (the engine draws pixels, lines, and rectangles) |
+| `src/starfield.ts` | Endless parallax stars and planets, generated from a hash so nothing is stored |
+| `src/profile.ts` | Name, color, and best score, kept in localStorage |
+| `src/leaderboard.ts` | Reads and posts scores on the relay |

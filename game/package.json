@@ -1,5 +1,5 @@
 {
-  "name": "game",
+  "name": "rockheal",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,8 @@
     "format": "biome format --write . && prettier --write \"**/*.{md,mdx,mdc,yml,yaml}\"",
     "format:check": "biome format . && prettier --check \"**/*.{md,mdx,mdc,yml,yaml}\"",
     "lint": "biome lint .",
-    "lint:fix": "biome lint --write ."
+    "lint:fix": "biome lint --write .",
+    "test:mp": "node scripts/multiplayer-smoke.mjs"
   },
   "dependencies": {
     "blit386": "^1.7.0"

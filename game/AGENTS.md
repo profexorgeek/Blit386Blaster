@@ -136,3 +136,9 @@ Run `npx blit agents sync` after a kit update (`npx blit upgrade`) to refresh th
 Everything below the managed end marker is yours. Write down decisions, todos, or project-specific rules here - for
 yourself or for your AI assistant. Kit updates (`npx blit agents sync`) rewrite only the managed part above and never
 touch this section.
+
+- Rockheal is multiplayer through `../relay`. Read `README.md` ("How the multiplayer works") before changing
+  `session.ts`: each player owns their ship and bullets, the host owns rocks and pickups.
+- Rocks and bullets are shared-clock trajectories (`world.ts`). Never move them per tick; rebase them with a new `t0`.
+- Yellow (`C.YELLOW`) is reserved for bullets and the world boundary. Red means health (and the crosshair).
+- Ship colors are palette blocks (`palette.ts`); sprites store indices 1-3 and draw with `paletteOffset = block - 1`.
