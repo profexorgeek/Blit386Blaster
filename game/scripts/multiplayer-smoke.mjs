@@ -154,7 +154,11 @@ try {
 
     check('B died', deadB.phase === 'dead' && !deadB.ship.alive);
     check('A credited with the kill', afterKill.ship.kills === 1, `kills=${afterKill.ship.kills}`);
-    check('A healed to 4 by the kill', afterKill.ship.hp === 4, `hp=${afterKill.ship.hp}`);
+    check(
+        'the kill added a filled health circle (4 of 4)',
+        afterKill.ship.hp === 4 && afterKill.ship.maxHp === 4,
+        `hp=${afterKill.ship.hp} max=${afterKill.ship.maxHp}`,
+    );
 
     await a.screenshot({ path: 'screenshots/mp-a-after-kill.png' });
     await sleep(700);
