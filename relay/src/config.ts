@@ -42,10 +42,10 @@ const DEFAULTS: RelayConfig = {
     allowedOrigins: [],
     trustProxy: false,
     dataDir: './data',
-    maxMessageBytes: 65536,
+    maxMessageBytes: 262144,
     maxPeersPerRoom: 32,
-    messagesPerSecond: 60,
-    messageBurst: 120,
+    messagesPerSecond: 100,
+    messageBurst: 200,
     apps: {},
 };
 

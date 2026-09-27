@@ -11,13 +11,16 @@
     ],
     "trustProxy": true,
     "dataDir": "./data",
-    "maxMessageBytes": 65536,
+    "maxMessageBytes": 262144,
     "maxPeersPerRoom": 32,
-    "messagesPerSecond": 60,
-    "messageBurst": 120,
+    "messagesPerSecond": 100,
+    "messageBurst": 200,
     "apps": {
         "rockheal": {
-            "scoreboard": { "ttlSeconds": 300, "keep": 10 },
+            "scoreboard": {
+                "ttlSeconds": 300,
+                "keep": 10
+            },
             "maxPeersPerRoom": 24
         }
     }
