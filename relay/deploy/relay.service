@@ -1,0 +1,26 @@
+# systemd unit for the relay. Install (paths assume the relay lives in /home/USER/relay and Node came from nvm):
+#
+#   sudo cp deploy/relay.service /etc/systemd/system/relay.service
+#   sudo nano /etc/systemd/system/relay.service      # fix User, WorkingDirectory, ExecStart below
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now relay
+#   journalctl -u relay -f                           # watch the logs
+
+[Unit]
+Description=Game relay (WebSocket rooms + scoreboards)
+After=network.target
+
+[Service]
+Type=simple
+User=USER
+WorkingDirectory=/home/USER/relay
+Environment=RELAY_CONFIG=/home/USER/relay/config.json
+# `which node` after `nvm use 24` gives this path; Node 22.18+ runs the TypeScript directly.
+ExecStart=/home/USER/.nvm/versions/node/v24.21.0/bin/node src/server.ts
+Restart=always
+RestartSec=2
+# The relay is tiny; cap it so a bug can never starve the websites on the same VPS.
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target
