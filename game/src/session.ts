@@ -134,6 +134,10 @@ export class Session {
     private spawnTimer = 0;
     private snapshotTimer = 0;
     private readonly pendingClaims = new Set<string>();
+    /** Host rock changes waiting to go out together, so a busy fight stays under the relay's rate limit. */
+    private readonly outgoingRocks = new Map<string, Rock>();
+    private readonly outgoingGone = new Set<string>();
+    private flushTimer: number | undefined;
 
     constructor(
         relayUrl: string,
@@ -584,7 +588,7 @@ export class Session {
             const rock = this.spawnRock(this.now(), true);
 
             if (rock) {
-                this.send({ k: 'rocks', set: [rockToWire(rock)], gone: [] });
+                this.queueRockChange(rock);
             }
         }
 
@@ -682,15 +686,13 @@ export class Session {
         rock.hp -= 1;
 
         if (rock.hp > 0) {
-            this.send({ k: 'rocks', set: [rockToWire(rock)], gone: [] });
+            this.queueRockChange(rock);
 
             return;
         }
 
         const t = this.now();
         const at = rockMotion(rock, t, scratch);
-        const children: Rock[] = [];
-
         this.rocks.delete(rock.id);
         this.fx.rockBroken(rock.size, at.x, at.y);
 
@@ -714,11 +716,11 @@ export class Session {
                 );
 
                 this.rocks.set(piece.id, piece);
-                children.push(piece);
+                this.queueRockChange(piece);
             }
         }
 
-        this.send({ k: 'rocks', set: children.map(rockToWire), gone: [rock.id] });
+        this.queueRockGone(rock.id);
 
         if (rock.size === 1) {
             const pickup: Pickup = { id: `${this.selfId}-${this.nextId++}`, x: at.x, y: at.y, t0: t };
@@ -726,6 +728,31 @@ export class Session {
             this.pickups.set(pickup.id, pickup);
             this.send({ k: 'pickup', p: pickupToWire(pickup) });
         }
+    }
+
+    private queueRockChange(rock: Rock): void {
+        this.outgoingRocks.set(rock.id, rock);
+        this.scheduleFlush();
+    }
+
+    private queueRockGone(id: string): void {
+        this.outgoingRocks.delete(id);
+        this.outgoingGone.add(id);
+        this.scheduleFlush();
+    }
+
+    /** A timer rather than the game loop, so hits still go out while the host's tab is in the background. */
+    private scheduleFlush(): void {
+        this.flushTimer ??= window.setTimeout(() => {
+            this.flushTimer = undefined;
+            this.send({
+                k: 'rocks',
+                set: [...this.outgoingRocks.values()].map(rockToWire),
+                gone: [...this.outgoingGone],
+            });
+            this.outgoingRocks.clear();
+            this.outgoingGone.clear();
+        }, 50);
     }
 
     private settleClaim(id: string, claimant: string): void {
