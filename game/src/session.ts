@@ -134,7 +134,7 @@ export class Session {
     bullets: Bullet[] = [];
 
     /** `?room=name` in the address puts you in your own set of rooms (private games, automated tests). */
-    private readonly roomPrefix = new URLSearchParams(window.location.search).get('room') ?? undefined;
+    readonly roomPrefix = roomFromAddress();
 
     /** False until we have a world: either we are the host, or the host has sent us its snapshot. */
     hasWorld = false;
@@ -893,6 +893,21 @@ export class Session {
 
         return player;
     }
+}
+
+/**
+ * The room name from `?room=`, cleaned up for the relay (letters, digits, `-` and `_`; the relay adds `-1`, `-2`...
+ * so it is capped at 28 characters). Lowercase, so "MyRoom" and "myroom" meet in the same place.
+ */
+function roomFromAddress(): string | undefined {
+    const raw = new URLSearchParams(window.location.search).get('room') ?? '';
+    const clean = raw
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 28);
+
+    return clean || undefined;
 }
 
 function pickupToWire(pickup: Pickup): PickupWire {

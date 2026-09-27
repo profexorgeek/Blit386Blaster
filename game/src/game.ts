@@ -928,6 +928,9 @@ class Game {
         } else if (this.session.status !== 'online') {
             note = this.session.status === 'connecting' ? 'CONNECTING' : 'OFFLINE';
             noteColor = C.TEXT_DIM;
+        } else if (this.session.roomPrefix) {
+            note = `ROOM ${this.session.roomPrefix.toUpperCase()}`;
+            noteColor = C.TEXT_DIM;
         }
 
         if (note) {
