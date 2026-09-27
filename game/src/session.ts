@@ -74,6 +74,8 @@ export interface LocalShip {
     tx: number;
     ty: number;
     hp: number;
+    /** Health circles this life: starts at START_HEALTH, and only kills raise it. */
+    maxHp: number;
     kills: number;
     alive: boolean;
 }
@@ -113,7 +115,7 @@ export interface Effects {
 export interface LocalEvents {
     /** Someone died to one of our bullets. */
     scoredKill(victimName: string): void;
-    /** The host confirmed we grabbed a pickup. */
+    /** The host confirmed we grabbed a pickup: refill one empty circle, never add a new one. */
     healed(): void;
 }
 
@@ -376,7 +378,9 @@ export class Session {
 
                 if (message.by === this.relay.selfId && this.local.alive) {
                     this.local.kills += 1;
-                    this.local.hp = Math.min(MAX_HEALTH, this.local.hp + 1);
+                    // A kill is the only way to earn a new health circle, and it arrives filled.
+                    this.local.maxHp = Math.min(MAX_HEALTH, this.local.maxHp + 1);
+                    this.local.hp = Math.min(this.local.maxHp, this.local.hp + 1);
                     this.events.scoredKill(player?.name ?? 'someone');
                 }
 

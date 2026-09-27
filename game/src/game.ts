@@ -23,7 +23,6 @@ import {
     FIRE_COOLDOWN,
     HUD_BOTTOM,
     HUD_TOP,
-    MAX_HEALTH,
     PICKUP_RADIUS,
     RESPAWN_DELAY,
     ROCK_SIZES,
@@ -94,7 +93,7 @@ class Game {
     leaderboard!: Leaderboard;
 
     phase: Phase = 'title';
-    ship: LocalShip = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, tx: 0, ty: 0, hp: 0, kills: 0, alive: false };
+    ship: LocalShip = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, tx: 0, ty: 0, hp: 0, maxHp: 0, kills: 0, alive: false };
     colorBlock = 0;
     prevX = 0;
     prevY = 0;
@@ -144,7 +143,7 @@ class Game {
         this.session = new Session(`${relay}/${APP_ID}`, this.ship, this.profile, this.effects(), {
             scoredKill: (victim) => this.showToast(`DESTROYED ${victim.toUpperCase()}`),
             healed: () => {
-                this.ship.hp = Math.min(MAX_HEALTH, this.ship.hp + 1);
+                this.ship.hp = Math.min(this.ship.maxHp, this.ship.hp + 1);
             },
         });
         void this.session.start();
@@ -243,7 +242,7 @@ class Game {
             }
         }
 
-        Object.assign(s, { x, y, vx: 0, vy: 0, tx: 0, ty: 0, hp: START_HEALTH, kills: 0, alive: true });
+        Object.assign(s, { x, y, vx: 0, vy: 0, tx: 0, ty: 0, hp: START_HEALTH, maxHp: START_HEALTH, kills: 0, alive: true });
         this.prevX = x;
         this.prevY = y;
         this.shieldUntil = this.session.now() + SPAWN_SHIELD;
@@ -559,8 +558,8 @@ class Game {
     private checkPickups(): void {
         const s = this.ship;
 
-        if (s.hp >= MAX_HEALTH) {
-            return; // full up: leave it for someone who needs it
+        if (s.hp >= s.maxHp) {
+            return; // every circle is full: leave it for someone who needs it
         }
 
         const reach = SHIP_RADIUS + PICKUP_RADIUS + 1;
@@ -864,7 +863,7 @@ class Game {
         line(0, HUD_TOP - 1, SCREEN_W - 1, HUD_TOP - 1, C.HUD_LINE);
 
         const hp = this.ship.alive ? this.ship.hp : 0;
-        const slots = Math.max(START_HEALTH, hp);
+        const slots = this.ship.alive ? this.ship.maxHp : START_HEALTH;
 
         for (let i = 0; i < slots; i++) {
             const x = 7 + i * 10;

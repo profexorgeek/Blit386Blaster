@@ -23,13 +23,14 @@ export const SHIP_DRAG = 0.985;
 export const SHIP_MASS = 1;
 export const SHIP_ROTATIONS = 16;
 
+/** Health circles at spawn. Kills add a circle (up to MAX_HEALTH); pickups only refill existing ones. */
 export const START_HEALTH = 3;
 export const MAX_HEALTH = 10;
 
 // --- Bullets ---
 export const BULLET_SPEED = 380;
 export const BULLET_LIFE = 1.1;
-export const FIRE_COOLDOWN = 0.14;
+export const FIRE_COOLDOWN = 0.28;
 
 // --- Asteroids ---
 export interface RockSize {
