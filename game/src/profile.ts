@@ -10,7 +10,12 @@ export interface Profile {
     best: number;
 }
 
-const KEY = 'rockheal.profile';
+/**
+ * `?profile=2` in the address keeps a separate identity under its own key, so two tabs in one browser can play as
+ * two different players.
+ */
+const PROFILE_SLOT = new URLSearchParams(window.location.search).get('profile');
+const KEY = PROFILE_SLOT ? `rockheal.profile.${PROFILE_SLOT}` : 'rockheal.profile';
 
 const ADJECTIVES = [
     'Swift', 'Rusty', 'Quiet', 'Lucky', 'Brave', 'Cosmic', 'Dusty', 'Frosty', 'Gentle', 'Hasty', 'Jolly', 'Lunar',
