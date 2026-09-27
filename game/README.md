@@ -23,7 +23,13 @@ Open the printed address in two browser windows to play against yourself. In dev
 `ws://localhost:8787` (set in `.env.development`). If it cannot reach a relay it still runs, solo, and keeps retrying in
 the background.
 
-Add `?relay=wss://relay.airpigengine.com` to the address to point any build at a different relay.
+Address options (combine with `&`):
+
+- `?profile=2` keeps a separate player identity, so two tabs in one browser are two players.
+- `?room=name` plays in your own set of rooms instead of the public ones.
+- `?relay=wss://relay.airpigengine.com` points any build at a different relay.
+
+The world is 500x500 for one player and grows by 250 px per extra player, up to 5000x5000.
 
 ## Test
 
