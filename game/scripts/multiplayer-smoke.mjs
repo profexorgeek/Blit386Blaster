@@ -183,9 +183,26 @@ try {
     await a.screenshot({ path: 'screenshots/mp-a-dead.png' });
     clearInterval(park);
 
-    // Host hand-over: close the host, and the other player should take over the field.
+    // A rock hit reported by the non-host is applied by the host and synced back to both.
     const hostPage = sa.isHost ? a : b;
     const otherPage = sa.isHost ? b : a;
+    const rockId = await otherPage.evaluate(() => {
+        const session = window.__game.game.session;
+        const rock = [...session.rocks.values()].find((r) => r.hp === 3);
+        const bullet = { id: 'test', owner: session.selfId, x0: 0, y0: 0, vx: 1, vy: 0, t0: 0, dead: false };
+
+        session.reportRockHit(bullet, rock, 0, 0);
+
+        return rock.id;
+    });
+
+    await sleep(400);
+
+    const rockHp = (page) => page.evaluate((id) => window.__game.game.session.rocks.get(id)?.hp, rockId);
+
+    check('non-host rock hit applied by host', (await rockHp(hostPage)) === 2 && (await rockHp(otherPage)) === 2);
+
+    // Host hand-over: close the host, and the other player should take over the field.
 
     await hostPage.context().close();
     await sleep(800);
