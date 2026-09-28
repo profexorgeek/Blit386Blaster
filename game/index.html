@@ -128,6 +128,15 @@
                 padding-left: 18px;
             }
 
+            li + li {
+                margin-top: 4px;
+            }
+
+            strong {
+                color: var(--text);
+                font-weight: 700;
+            }
+
             kbd,
             code {
                 font: inherit;
@@ -219,13 +228,23 @@
 
                 <section>
                     <h2>RULES</h2>
-                    <p>
-                        Rocks take three hits per size and split twice. The smallest pieces drop red health circles
-                        that refill empty health (grab them at full health to keep them from others). Enemy hits cost one circle; each kill adds a new one (up to 10). But
-                        every kill also slows you a little, and your ship doubles in size at 5 kills and triples at 10,
-                        so leaders make big targets. When you die, your kills go on a leaderboard that forgets scores
-                        after five minutes.
-                    </p>
+                    <ul>
+                        <li>You start with 3 health circles. An enemy hit empties one.</li>
+                        <li>
+                            <strong>Kills raise your max health</strong> by one full circle, up to 10. That is the only
+                            way to grow it.
+                        </li>
+                        <li>
+                            Rocks take three hits per size and split twice. The smallest pieces drop red health pickups
+                            that refill empty circles but never raise your max. Grab them at full health to keep them
+                            from others. They vanish after 10 seconds.
+                        </li>
+                        <li>
+                            Every kill also slows you a little, and your ship doubles in size at 5 kills and triples at
+                            10, so leaders make big targets.
+                        </li>
+                        <li>When you die, your kills go on a leaderboard that forgets scores after five minutes.</li>
+                    </ul>
                 </section>
 
                 <section>
