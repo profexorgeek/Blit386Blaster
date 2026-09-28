@@ -73,6 +73,8 @@ const VIEW_CENTER_Y = PLAY_TOP + (PLAY_BOTTOM - PLAY_TOP) / 2;
 const SPAWN_SHIELD = 2;
 const MAX_PARTICLES = 2500;
 const MAX_SHARDS = 600;
+/** How long an explosion's negative flash stays up: one frame at 30 fps. */
+const FLASH_MS = 1000 / 30;
 const TICK = 1 / 60;
 
 type Phase = 'title' | 'playing' | 'dead';
@@ -124,9 +126,10 @@ class Game {
     shards: Shard[] = [];
     /** Expanding shockwave circles from explosions. */
     rings: { x: number; y: number; age: number; duration: number; radius: number; color: number }[] = [];
-    /** An on-screen explosion asked for a one-frame negative flash; `isInverted` is true during that frame. */
+    /** An on-screen explosion asked for a negative flash; `isInverted` is true while it shows. */
     flashPending = false;
     isInverted = false;
+    flashEndsAt = 0;
     /** Set by a DOM listener: the engine's per-frame press edge can miss a click shorter than one frame. */
     clickQueued = false;
 
@@ -869,8 +872,11 @@ class Game {
     // --- Render ------------------------------------------------------------------------------------------------
 
     render(): void {
-        // The negative flash lasts exactly one drawn frame: undo last frame's, then start a new one if asked.
-        if (this.isInverted) {
+        // The negative flash lasts one 30 fps frame (FLASH_MS) however fast the display refreshes, and always at
+        // least one drawn frame.
+        const nowMs = performance.now();
+
+        if (this.isInverted && nowMs >= this.flashEndsAt) {
             setInverted(false);
             this.isInverted = false;
         }
@@ -878,6 +884,7 @@ class Game {
         if (this.flashPending) {
             setInverted(true);
             this.isInverted = true;
+            this.flashEndsAt = nowMs + FLASH_MS;
             this.flashPending = false;
         }
 
@@ -1072,6 +1079,9 @@ class Game {
                 circle(x, 5, 3, C.RED);
             }
         }
+
+        // Your own name in the middle of the top band, in your ship color, so you can find yourself on the board.
+        textCentered(SCREEN_W / 2, -1, this.colorBlock, this.profile.name);
 
         // Bottom band: kill count on the left, world position in the middle, notices on the right.
         const top = SCREEN_H - HUD_BOTTOM;
