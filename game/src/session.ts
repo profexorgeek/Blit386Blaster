@@ -111,7 +111,8 @@ export interface Effects {
     rockHit(x: number, y: number): void;
     rockBroken(size: number, x: number, y: number): void;
     shipExploded(colorBlock: number, x: number, y: number): void;
-    shipHurt(x: number, y: number): void;
+    /** A ship took a hit from a bullet travelling along (dx, dy) (a unit vector, or zero if unknown). */
+    shipHurt(colorBlock: number, x: number, y: number, dx: number, dy: number): void;
 }
 
 /** Callbacks for things that change the local player's own state. */
@@ -371,12 +372,20 @@ export class Session {
                 break;
 
             case 'hurt': {
-                this.killBullet(message.bullet);
-
+                const bullet = this.bullets.find((b) => b.id === message.bullet);
+                const speed = bullet ? Math.hypot(bullet.vx, bullet.vy) : 0;
                 const player = this.players.get(from);
 
+                this.killBullet(message.bullet);
+
                 if (player) {
-                    this.fx.shipHurt(player.dx, player.dy);
+                    this.fx.shipHurt(
+                        player.colorBlock,
+                        player.dx,
+                        player.dy,
+                        speed > 0 ? bullet!.vx / speed : 0,
+                        speed > 0 ? bullet!.vy / speed : 0,
+                    );
                 }
 
                 break;

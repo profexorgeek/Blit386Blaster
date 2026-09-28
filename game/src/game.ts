@@ -56,6 +56,7 @@ import {
     type Motion,
     type Particle,
     type Rock,
+    type Shard,
     bulletPos,
     randomRange,
     rockAngle,
@@ -71,6 +72,7 @@ const VIEW_CENTER_X = SCREEN_W / 2;
 const VIEW_CENTER_Y = PLAY_TOP + (PLAY_BOTTOM - PLAY_TOP) / 2;
 const SPAWN_SHIELD = 2;
 const MAX_PARTICLES = 2500;
+const MAX_SHARDS = 600;
 const TICK = 1 / 60;
 
 type Phase = 'title' | 'playing' | 'dead';
@@ -119,6 +121,7 @@ class Game {
     toastUntil = 0;
 
     particles: Particle[] = [];
+    shards: Shard[] = [];
     /** Set by a DOM listener: the engine's per-frame press edge can miss a click shorter than one frame. */
     clickQueued = false;
 
@@ -567,7 +570,10 @@ class Game {
 
         this.session.reportHurt(bullet);
         s.hp -= 1;
-        this.burst(s.x, s.y, 10, [C.ROCK_FLASH, this.colorBlock + 2], 40, 120, 0.35);
+
+        const speed = Math.hypot(bullet.vx, bullet.vy) || 1;
+
+        this.effects().shipHurt(this.colorBlock, s.x, s.y, bullet.vx / speed, bullet.vy / speed);
 
         if (s.hp <= 0) {
             this.die(bullet.owner);
@@ -669,9 +675,14 @@ class Game {
             rockHit: (x: number, y: number) => this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25),
             rockBroken: (size: number, x: number, y: number) =>
                 this.burst(x, y, 6 + size * 8, [C.ROCK_EDGE, C.ROCK_FILL, C.ROCK_FLASH], 20, 70 + size * 15, 0.9),
-            shipExploded: (block: number, x: number, y: number) =>
-                this.burst(x, y, 50, [block, block + 1, block + 2], 20, 160, 1.2),
-            shipHurt: (x: number, y: number) => this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3),
+            shipExploded: (block: number, x: number, y: number) => {
+                this.burst(x, y, 50, [block, block + 1, block + 2], 20, 160, 1.2);
+                this.scatterShards(x, y, 24, block, 0, 0);
+            },
+            shipHurt: (block: number, x: number, y: number, dx: number, dy: number) => {
+                this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3);
+                this.scatterShards(x, y, 9, block, dx, dy);
+            },
         };
     }
 
@@ -736,7 +747,64 @@ class Game {
         this.particles.push({ x, y, vx, vy, life, maxLife: life, color });
     }
 
+    /**
+     * Knocks `count` line shards off a ship at (x, y). With a hit direction (dx, dy) they spray mostly along it,
+     * the way the bullet was travelling; without one they fly every which way. They coast, spin, and hang in space
+     * for several seconds, so a hit reads clearly even after the moment has passed.
+     */
+    private scatterShards(x: number, y: number, count: number, block: number, dx: number, dy: number): void {
+        const hasDirection = dx !== 0 || dy !== 0;
+        const heading = Math.atan2(dy, dx);
+
+        for (let i = 0; i < count; i++) {
+            if (this.shards.length >= MAX_SHARDS) {
+                this.shards.shift();
+            }
+
+            const angle = hasDirection ? heading + randomRange(-1.1, 1.1) : Math.random() * Math.PI * 2;
+            const speed = randomRange(25, 85);
+            const life = randomRange(4, 7);
+
+            this.shards.push({
+                x: x + Math.cos(angle) * 2,
+                y: y + Math.sin(angle) * 2,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                angle: Math.random() * Math.PI,
+                spin: randomRange(-5, 5),
+                length: 2 + Math.floor(Math.random() * 3),
+                life,
+                maxLife: life,
+                color: i % 3 === 0 ? block + 2 : block,
+                fadeColor: block + 1,
+            });
+        }
+    }
+
+    private updateShards(): void {
+        for (let i = this.shards.length - 1; i >= 0; i--) {
+            const shard = this.shards[i];
+
+            shard.life -= TICK;
+
+            if (shard.life <= 0) {
+                this.shards.splice(i, 1);
+                continue;
+            }
+
+            // Quick drag at first, so they burst out then drift lazily.
+            shard.vx *= 0.985;
+            shard.vy *= 0.985;
+            shard.x += shard.vx * TICK;
+            shard.y += shard.vy * TICK;
+            shard.angle += shard.spin * TICK;
+            shard.spin *= 0.995;
+        }
+    }
+
     private updateParticles(): void {
+        this.updateShards();
+
         const list = this.particles;
 
         for (let i = list.length - 1; i >= 0; i--) {
@@ -797,6 +865,7 @@ class Game {
         this.drawRocks(cx, cy, t);
         this.drawPickups(cx, cy, t);
         this.drawParticles(cx, cy);
+        this.drawShards(cx, cy);
         this.drawBullets(cx, cy, t);
 
         for (const player of this.session.players.values()) {
@@ -911,6 +980,22 @@ class Game {
             const p = bulletPos(bullet, t, this.motion);
 
             pixel(p.x - cx, p.y - cy, C.YELLOW);
+        }
+    }
+
+    private drawShards(cx: number, cy: number): void {
+        for (const shard of this.shards) {
+            const x = shard.x - cx;
+            const y = shard.y - cy;
+
+            if (x < -4 || y < -4 || x > SCREEN_W + 4 || y > SCREEN_H + 4) {
+                continue;
+            }
+
+            const hx = (Math.cos(shard.angle) * shard.length) / 2;
+            const hy = (Math.sin(shard.angle) * shard.length) / 2;
+
+            line(x - hx, y - hy, x + hx, y + hy, shard.life < 1 ? shard.fadeColor : shard.color);
         }
     }
 

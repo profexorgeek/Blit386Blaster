@@ -75,6 +75,22 @@ export interface Particle {
     color: number;
 }
 
+/** A short spinning line of wreckage knocked off a ship. Lasts much longer than pixel particles. */
+export interface Shard {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    spin: number;
+    length: number;
+    life: number;
+    maxLife: number;
+    color: number;
+    /** Shown for the last second, so a shard darkens before it is gone. */
+    fadeColor: number;
+}
+
 export interface Motion {
     x: number;
     y: number;
