@@ -50,6 +50,7 @@ import { C, allocPlayerColor, createPalette, randomShipHue, setInverted, setPlay
 import { type Profile, loadProfile, randomName, saveProfile } from './profile.ts';
 import { type LocalShip, Session } from './session.ts';
 import { buildShipSprites, drawShip } from './sprites.ts';
+import { Sounds } from './sound.ts';
 import { drawStarfield } from './starfield.ts';
 import {
     type Bullet,
@@ -101,6 +102,7 @@ class Game {
     profile!: Profile;
     session!: Session;
     leaderboard!: Leaderboard;
+    sounds!: Sounds;
 
     phase: Phase = 'title';
     ship: LocalShip = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, tx: 0, ty: 0, hp: 0, maxHp: 0, kills: 0, alive: false };
@@ -157,14 +159,28 @@ class Game {
         this.leaderboard = new Leaderboard(relay);
         void this.leaderboard.refresh();
 
+        // Before the session exists: its messages (shots, explosions) play sounds.
+        this.sounds = await Sounds.create();
+
         this.session = new Session(`${relay}/${APP_ID}`, this.ship, this.profile, this.effects(), {
             scoredKill: (victim) => this.showToast(`DESTROYED ${victim.toUpperCase()}`),
             healed: () => {
                 this.ship.hp = Math.min(this.ship.maxHp, this.ship.hp + 1);
+                this.sounds.pickup();
             },
-            enemyFired: (bullet) => this.hitTestWhileHidden(bullet),
+            enemyFired: (bullet) => {
+                this.hitTestWhileHidden(bullet);
+                this.playShotFrom(bullet.x0, bullet.y0);
+            },
         });
         void this.session.start();
+
+        // A hidden tab stops the game loop, so make sure the engine hiss does not drone on by itself.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                this.sounds.setThrusting(false);
+            }
+        });
 
         // Right-click should not open a menu over the game.
         document.addEventListener('contextmenu', (event) => {
@@ -214,6 +230,14 @@ class Game {
     update(): void {
         this.session.update(TICK);
         this.updateParticles();
+
+        if (BT.isKeyPressed('KeyM')) {
+            this.sounds.toggleMuted();
+        }
+
+        if (this.phase !== 'playing') {
+            this.sounds.setThrusting(false);
+        }
 
         const clicked = this.clickQueued || BT.isKeyPressed('Space') || BT.isKeyPressed('Enter');
 
@@ -320,6 +344,8 @@ class Game {
 
         const thrust = Math.hypot(ax, ay);
 
+        this.sounds.setThrusting(thrust > 0);
+
         s.tx = thrust > 0 ? ax / thrust : 0;
         s.ty = thrust > 0 ? ay / thrust : 0;
         s.vx = (s.vx + ax * TICK) * SHIP_DRAG;
@@ -347,6 +373,7 @@ class Game {
 
         if ((BT.isDown(BT.BTN_POINTER_A, 0) || BT.isKeyDown('Space')) && this.fireCooldown <= 0) {
             this.fireCooldown = FIRE_COOLDOWN;
+            this.sounds.shoot();
             this.session.fire(
                 s.x + fx * 5 * shipScale(s.kills),
                 s.y + fy * 5 * shipScale(s.kills),
@@ -372,6 +399,36 @@ class Game {
         this.centerCamera(s.x, s.y);
     }
 
+    /** Where a sound at world (x, y) sits between the speakers, and how loud it is from here (0 when far off). */
+    private placeSound(x: number, y: number): { volume: number; pan: number } {
+        const dx = x - (this.camX + VIEW_CENTER_X);
+        const dy = y - (this.camY + VIEW_CENTER_Y);
+        const distance = Math.hypot(dx, dy);
+        const reach = SCREEN_W * 0.9;
+
+        return {
+            volume: Math.max(0, 1 - distance / reach),
+            pan: Math.max(-0.8, Math.min(0.8, dx / (SCREEN_W / 2))),
+        };
+    }
+
+    /** Other players' shots, heard when they happen near your view. */
+    private playShotFrom(x: number, y: number): void {
+        const { volume, pan } = this.placeSound(x, y);
+
+        if (volume > 0) {
+            this.sounds.shoot(volume * 0.5, pan);
+        }
+    }
+
+    private playExplosionAt(x: number, y: number): void {
+        const { volume, pan } = this.placeSound(x, y);
+
+        if (volume > 0) {
+            this.sounds.explode(Math.max(0.35, volume), pan);
+        }
+    }
+
     /** Our ship's collision radius; it grows with kills (see SHIP_GROW_AT_KILLS). */
     private shipRadius(): number {
         return SHIP_RADIUS * shipScale(this.ship.kills);
@@ -383,17 +440,21 @@ class Game {
 
         if (s.x < r) {
             s.x = r;
+            this.sounds.bounce(Math.abs(s.vx));
             s.vx = Math.abs(s.vx) * BOUNCE_RESTITUTION;
         } else if (s.x > world.size - r) {
             s.x = world.size - r;
+            this.sounds.bounce(Math.abs(s.vx));
             s.vx = -Math.abs(s.vx) * BOUNCE_RESTITUTION;
         }
 
         if (s.y < r) {
             s.y = r;
+            this.sounds.bounce(Math.abs(s.vy));
             s.vy = Math.abs(s.vy) * BOUNCE_RESTITUTION;
         } else if (s.y > world.size - r) {
             s.y = world.size - r;
+            this.sounds.bounce(Math.abs(s.vy));
             s.vy = -Math.abs(s.vy) * BOUNCE_RESTITUTION;
         }
     }
@@ -428,6 +489,7 @@ class Game {
             const closing = (s.vx - m.vx) * nx + (s.vy - m.vy) * ny;
 
             if (closing < 0) {
+                this.sounds.bounce(-closing);
                 const rockMass = ROCK_SIZES[rock.size].mass;
                 const impulse = (-(1 + BOUNCE_RESTITUTION) * closing) / (1 / SHIP_MASS + 1 / rockMass);
 
@@ -472,6 +534,7 @@ class Game {
             s.y = player.dy + ny * reach;
 
             if (closing < 0) {
+                this.sounds.bounce(-closing);
                 s.vx -= ((1 + BOUNCE_RESTITUTION) / 2) * closing * nx;
                 s.vy -= ((1 + BOUNCE_RESTITUTION) / 2) * closing * ny;
             }
@@ -692,6 +755,8 @@ class Game {
 
                 // A one-frame photo-negative flash, but only for explosions you can see, and never for players
                 // whose system asks for reduced motion.
+                this.playExplosionAt(x, y);
+
                 const onScreen =
                     x > this.camX - 60 && x < this.camX + SCREEN_W + 60 && y > this.camY - 60 && y < this.camY + SCREEN_H + 60;
 
@@ -1109,6 +1174,11 @@ class Game {
             noteColor = C.TEXT_DIM;
         }
 
+        if (this.sounds.isMuted && !note.startsWith('DESTROYED')) {
+            note = note ? `MUTED  ${note}` : 'MUTED';
+            noteColor = C.TEXT_DIM;
+        }
+
         if (note) {
             text(SCREEN_W - 4 - textWidth(note), top + 1, noteColor, note);
         }
@@ -1130,7 +1200,7 @@ class Game {
         drawShip(nameX + 4, y + 6, -Math.PI / 2, this.colorBlock);
         text(nameX + 14, y, this.colorBlock, this.profile.name);
         y += 11;
-        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, `BEST ${this.profile.best}   R: NEW NAME`);
+        textCentered(SCREEN_W / 2, y, C.TEXT_DIM, `BEST ${this.profile.best}   R: NEW NAME   M: SOUND`);
         y += 15;
         this.drawScores(panel.x + 20, panel.x + panel.w - 20, y, rows);
 
