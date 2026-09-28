@@ -178,7 +178,7 @@ class Game {
         // A hidden tab stops the game loop, so make sure the engine hiss does not drone on by itself.
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                this.sounds.setThrusting(false);
+                this.sounds.stopAllEngines();
             }
         });
 
@@ -237,6 +237,19 @@ class Game {
 
         if (this.phase !== 'playing') {
             this.sounds.setThrusting(false);
+        }
+
+        // Other ships' engines, placed by where they are relative to your view (about 15 times a second).
+        if (BT.ticks % 4 === 0) {
+            const engines = [];
+
+            for (const player of this.session.players.values()) {
+                if (player.alive && player.hasState && (player.tx !== 0 || player.ty !== 0)) {
+                    engines.push({ id: player.id, ...this.placeSound(player.dx, player.dy) });
+                }
+            }
+
+            this.sounds.updateRemoteEngines(engines);
         }
 
         const clicked = this.clickQueued || BT.isKeyPressed('Space') || BT.isKeyPressed('Enter');
@@ -744,12 +757,26 @@ class Game {
     private effects() {
         return {
             rockHit: (x: number, y: number) => this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25),
-            rockBroken: (size: number, x: number, y: number) =>
-                this.burst(x, y, 6 + size * 8, [C.ROCK_EDGE, C.ROCK_FILL, C.ROCK_FLASH], 20, 70 + size * 15, 0.9),
+            // Much smaller than a ship blowing up: a quick shockwave the size of the rock, dust that lingers and
+            // dims, and a few chips of rock.
+            rockBroken: (size: number, x: number, y: number) => {
+                const rocky = [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL];
+
+                this.burst(x, y, 10 + size * 10, rocky, 15, 55 + size * 20, 1.9, C.ROCK_FILL);
+                this.scatterShards(x, y, size * 2, [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL], 0, 0);
+                this.rings.push({
+                    x,
+                    y,
+                    age: 0,
+                    duration: 0.22 + size * 0.05,
+                    radius: ROCK_SIZES[size].radius + 8,
+                    color: C.ROCK_EDGE,
+                });
+            },
             shipExploded: (block: number, x: number, y: number) => {
                 this.burst(x, y, 170, [block, block + 1, block + 2, C.ROCK_FLASH, C.TEXT], 30, 290, 1.9);
                 this.burst(x, y, 40, [block + 2, C.TEXT], 10, 60, 0.8);
-                this.scatterShards(x, y, 44, block, 0, 0);
+                this.scatterShards(x, y, 44, [block, block + 2, block + 1], 0, 0);
                 this.rings.push({ x, y, age: 0, duration: 0.5, radius: 70, color: block + 2 });
                 this.rings.push({ x, y, age: 0, duration: 0.3, radius: 40, color: C.ROCK_FLASH });
 
@@ -766,7 +793,7 @@ class Game {
             },
             shipHurt: (block: number, x: number, y: number, dx: number, dy: number) => {
                 this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3);
-                this.scatterShards(x, y, 9, block, dx, dy);
+                this.scatterShards(x, y, 9, [block, block + 2, block + 1], dx, dy);
             },
         };
     }
@@ -779,6 +806,7 @@ class Game {
         minSpeed: number,
         maxSpeed: number,
         life: number,
+        fadeColor?: number,
     ): void {
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
@@ -792,6 +820,7 @@ class Game {
                 Math.sin(angle) * speed,
                 lifetime,
                 colors[i % colors.length],
+                fadeColor,
             );
         }
     }
@@ -824,12 +853,20 @@ class Game {
         }
     }
 
-    private addParticle(x: number, y: number, vx: number, vy: number, life: number, color: number): void {
+    private addParticle(
+        x: number,
+        y: number,
+        vx: number,
+        vy: number,
+        life: number,
+        color: number,
+        fadeColor?: number,
+    ): void {
         if (this.particles.length >= MAX_PARTICLES) {
             return;
         }
 
-        this.particles.push({ x, y, vx, vy, life, maxLife: life, color });
+        this.particles.push({ x, y, vx, vy, life, maxLife: life, color, fadeColor });
     }
 
     /**
@@ -837,7 +874,14 @@ class Game {
      * the way the bullet was travelling; without one they fly every which way. They coast, spin, and hang in space
      * for several seconds, so a hit reads clearly even after the moment has passed.
      */
-    private scatterShards(x: number, y: number, count: number, block: number, dx: number, dy: number): void {
+    private scatterShards(
+        x: number,
+        y: number,
+        count: number,
+        [main, accent, fade]: [number, number, number],
+        dx: number,
+        dy: number,
+    ): void {
         const hasDirection = dx !== 0 || dy !== 0;
         const heading = Math.atan2(dy, dx);
 
@@ -860,8 +904,8 @@ class Game {
                 length: 2 + Math.floor(Math.random() * 3),
                 life,
                 maxLife: life,
-                color: i % 3 === 0 ? block + 2 : block,
-                fadeColor: block + 1,
+                color: i % 3 === 0 ? accent : main,
+                fadeColor: fade,
             });
         }
     }
@@ -1122,7 +1166,9 @@ class Game {
             const y = p.y - cy;
 
             if (x >= 0 && y >= 0 && x < SCREEN_W && y < SCREEN_H) {
-                pixel(x, y, p.color);
+                const fading = p.fadeColor !== undefined && p.life < p.maxLife * 0.35;
+
+                pixel(x, y, fading ? (p.fadeColor as number) : p.color);
             }
         }
     }

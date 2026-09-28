@@ -8,9 +8,25 @@ const MUTE_KEY = 'blit386blaster.muted';
 /** Hard bounces are louder; below this closing speed (px/s) a touch makes no sound at all. */
 const BOUNCE_MIN_SPEED = 30;
 const BOUNCE_COOLDOWN_MS = 90;
+/**
+ * The engine mixes 16 voices at once. Other ships' engine loops get at most this many (the loudest), so shots and
+ * explosions always have room.
+ */
+const MAX_REMOTE_ENGINES = 3;
+const LOCAL_THRUST_VOLUME = 0.1;
+
+/** A sound source somewhere in the world, already placed relative to the listener. */
+export interface PlacedSource {
+    id: string;
+    /** 0 (out of earshot) to 1 (right here). */
+    volume: number;
+    /** -1 left to 1 right. */
+    pan: number;
+}
 
 export class Sounds {
     private thrustRef: SoundRef | null = null;
+    private readonly remoteEngines = new Map<string, SoundRef>();
     private lastBounceMs = 0;
 
     private constructor(
@@ -96,11 +112,64 @@ export class Sounds {
     setThrusting(on: boolean): void {
         if (on && this.thrustRef === null) {
             // Played slowed down, the hiss turns into a darker rumble.
-            this.thrustRef = BT.soundPlay(this.thrustClip, { loop: true, volume: 0.1, pitch: 0.55, fadeInMs: 60 });
+            this.thrustRef = BT.soundPlay(this.thrustClip, {
+                loop: true,
+                volume: LOCAL_THRUST_VOLUME,
+                pitch: 0.55,
+                fadeInMs: 60,
+            });
         } else if (!on && this.thrustRef !== null) {
             BT.soundStop(this.thrustRef, { fadeOutMs: 120 });
             this.thrustRef = null;
         }
+    }
+
+    /**
+     * Keeps a looping engine hiss running for each of the loudest thrusting ships nearby, following their volume
+     * and pan, and fades out the rest. Call a few times a second with every thrusting ship in earshot.
+     */
+    updateRemoteEngines(sources: PlacedSource[]): void {
+        const loudest = sources
+            .filter((source) => source.volume > 0.03)
+            .sort((a, b) => b.volume - a.volume)
+            .slice(0, MAX_REMOTE_ENGINES);
+        const keep = new Set(loudest.map((source) => source.id));
+
+        for (const [id, ref] of this.remoteEngines) {
+            if (!keep.has(id)) {
+                BT.soundStop(ref, { fadeOutMs: 200 });
+                this.remoteEngines.delete(id);
+            }
+        }
+
+        for (const source of loudest) {
+            // A touch quieter than your own engine, even up close, so yours stays the one you notice.
+            const volume = LOCAL_THRUST_VOLUME * 0.8 * source.volume;
+            const ref = this.remoteEngines.get(source.id);
+
+            if (ref) {
+                BT.soundVolumeSet(ref, volume, { fadeMs: 80 });
+                BT.soundPanSet(ref, source.pan, { fadeMs: 80 });
+            } else {
+                this.remoteEngines.set(
+                    source.id,
+                    BT.soundPlay(this.thrustClip, {
+                        loop: true,
+                        volume,
+                        pan: source.pan,
+                        // Each ship hums at its own pitch, so two engines do not blur into one.
+                        pitch: 0.45 + (hashId(source.id) % 20) / 100,
+                        fadeInMs: 120,
+                    }),
+                );
+            }
+        }
+    }
+
+    /** Silences every engine loop, yours and everyone else's (e.g. when the tab is hidden). */
+    stopAllEngines(): void {
+        this.setThrusting(false);
+        this.updateRemoteEngines([]);
     }
 
     shoot(volume = 1, pan = 0): void {
@@ -140,6 +209,16 @@ export class Sounds {
             // Storage blocked: the setting just does not stick.
         }
     }
+}
+
+function hashId(id: string): number {
+    let hash = 0;
+
+    for (let i = 0; i < id.length; i++) {
+        hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+    }
+
+    return hash;
 }
 
 function loadMuted(): boolean {

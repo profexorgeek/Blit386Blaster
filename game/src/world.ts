@@ -73,6 +73,8 @@ export interface Particle {
     life: number;
     maxLife: number;
     color: number;
+    /** Optional dimmer color for the last third of its life, so it fades instead of popping out. */
+    fadeColor?: number;
 }
 
 /** A short spinning line of wreckage knocked off a ship. Lasts much longer than pixel particles. */
