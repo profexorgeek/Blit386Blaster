@@ -15,6 +15,15 @@ const BOUNCE_COOLDOWN_MS = 90;
 const MAX_REMOTE_ENGINES = 3;
 const LOCAL_THRUST_VOLUME = 0.1;
 
+/**
+ * When all 16 voices are busy, the engine drops the lowest priority first. The sounds that matter for play (hits,
+ * explosions, shots) outrank the ambience (bounces, rock hits and breaks).
+ */
+const PRIORITY_SUBTLE = 0;
+const PRIORITY_SHOT = 5;
+const PRIORITY_HIT = 8;
+const PRIORITY_EXPLOSION = 10;
+
 /** A sound source somewhere in the world, already placed relative to the listener. */
 export interface PlacedSource {
     id: string;
@@ -36,10 +45,13 @@ export class Sounds {
         private readonly explodeClip: AudioClip,
         private readonly chimeLowClip: AudioClip,
         private readonly chimeHighClip: AudioClip,
+        private readonly hurtClip: AudioClip,
+        private readonly rockHitClip: AudioClip,
+        private readonly rockBreakClip: AudioClip,
     ) {}
 
     static async create(): Promise<Sounds> {
-        const [thrust, shoot, bounce, explode, chimeLow, chimeHigh] = await Promise.all([
+        const [thrust, shoot, bounce, explode, chimeLow, chimeHigh, hurt, rockHit, rockBreak] = await Promise.all([
             // A second of flat noise with no envelope, so it loops without a click at the seam.
             AudioClip.synth({
                 waveform: 'noise',
@@ -60,13 +72,13 @@ export class Sounds {
                 volume: 0.5,
                 seed: 1,
             }),
-            // A springy "boing": a triangle wave sliding up, with a little wobble.
+            // A soft, low "boing": a triangle wave sliding up, with a little wobble.
             AudioClip.synth({
                 waveform: 'triangle',
-                frequency: 160,
+                frequency: 80,
                 duration: 0.16,
-                pitchSweep: { toFrequency: 620 },
-                vibrato: { rate: 30, depth: 40 },
+                pitchSweep: { toFrequency: 240 },
+                vibrato: { rate: 24, depth: 15 },
                 envelope: { attack: 0, decay: 0.14, sustain: 0, release: 0.02 },
                 volume: 0.9,
                 seed: 2,
@@ -91,9 +103,43 @@ export class Sounds {
                 volume: 0.5,
                 seed: 4,
             }),
+            // Ship hit: a harsh, gritty square wave dropping fast. Meant to cut through everything else.
+            AudioClip.synth({
+                waveform: 'square',
+                frequency: 520,
+                duration: 0.2,
+                pitchSweep: { toFrequency: 90 },
+                noiseMix: 0.45,
+                dutyCycle: 0.4,
+                envelope: { attack: 0, decay: 0.18, sustain: 0, release: 0.02 },
+                volume: 0.9,
+                seed: 5,
+            }),
+            // Rock hit: a short, dull low "tock".
+            AudioClip.synth({
+                waveform: 'triangle',
+                frequency: 140,
+                duration: 0.07,
+                pitchSweep: { toFrequency: 70 },
+                noiseMix: 0.35,
+                envelope: { attack: 0, decay: 0.06, sustain: 0, release: 0.01 },
+                volume: 0.9,
+                seed: 6,
+            }),
+            // Rock break: a low gravelly crunch with a rumble under it.
+            AudioClip.synth({
+                waveform: 'triangle',
+                frequency: 110,
+                duration: 0.4,
+                pitchSweep: { toFrequency: 40 },
+                noiseMix: 0.7,
+                envelope: { attack: 0, decay: 0.38, sustain: 0, release: 0.02 },
+                volume: 0.9,
+                seed: 8,
+            }),
         ]);
 
-        const sounds = new Sounds(thrust, shoot, bounce, explode, chimeLow, chimeHigh);
+        const sounds = new Sounds(thrust, shoot, bounce, explode, chimeLow, chimeHigh, hurt, rockHit, rockBreak);
 
         sounds.setMuted(loadMuted());
 
@@ -173,7 +219,12 @@ export class Sounds {
     }
 
     shoot(volume = 1, pan = 0): void {
-        BT.soundPlay(this.shootClip, { volume: 0.2 * volume, pan, pitch: 0.95 + Math.random() * 0.1 });
+        BT.soundPlay(this.shootClip, {
+            volume: 0.2 * volume,
+            pan,
+            pitch: 0.95 + Math.random() * 0.1,
+            priority: PRIORITY_SHOT,
+        });
     }
 
     /** `speed` is how hard the ship hit (closing speed in px/s). */
@@ -186,13 +237,39 @@ export class Sounds {
 
         this.lastBounceMs = now;
         BT.soundPlay(this.bounceClip, {
-            volume: Math.min(0.55, 0.15 + speed / 500),
+            volume: Math.min(0.2, 0.06 + speed / 1500),
             pitch: 0.9 + Math.random() * 0.2,
+            priority: PRIORITY_SUBTLE,
         });
     }
 
     explode(volume = 1, pan = 0): void {
-        BT.soundPlay(this.explodeClip, { volume: 0.8 * volume, pan, priority: 10 });
+        BT.soundPlay(this.explodeClip, { volume: 0.8 * volume, pan, priority: PRIORITY_EXPLOSION });
+    }
+
+    /** A ship took a hit. Loud: this is the sound that tells you a shot landed. */
+    hurt(volume = 1, pan = 0): void {
+        BT.soundPlay(this.hurtClip, { volume: 0.45 * volume, pan, priority: PRIORITY_HIT });
+    }
+
+    /** A bullet struck a rock. Subtle. */
+    rockHit(volume = 1, pan = 0): void {
+        BT.soundPlay(this.rockHitClip, {
+            volume: 0.1 * volume,
+            pan,
+            pitch: 0.85 + Math.random() * 0.3,
+            priority: PRIORITY_SUBTLE,
+        });
+    }
+
+    /** A rock broke apart; bigger rocks sound deeper and a little louder. Still subtle. */
+    rockBreak(size: number, volume = 1, pan = 0): void {
+        BT.soundPlay(this.rockBreakClip, {
+            volume: (0.08 + size * 0.03) * volume,
+            pan,
+            pitch: 1.25 - size * 0.15 + Math.random() * 0.1,
+            priority: PRIORITY_SUBTLE,
+        });
     }
 
     pickup(): void {

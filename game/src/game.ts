@@ -435,6 +435,15 @@ class Game {
         };
     }
 
+    /** Plays a sound for something at world (x, y), if it is within earshot, at its volume and pan. */
+    private playAt(x: number, y: number, play: (volume: number, pan: number) => void): void {
+        const { volume, pan } = this.placeSound(x, y);
+
+        if (volume > 0) {
+            play(volume, pan);
+        }
+    }
+
     /** Other players' shots, heard when they happen near your view. */
     private playShotFrom(x: number, y: number): void {
         const { volume, pan } = this.placeSound(x, y);
@@ -698,12 +707,12 @@ class Game {
         }
     }
 
+    /**
+     * Grab any pickup we touch, even at full health: it refills nothing then, but it denies it to everyone else.
+     * (The heal itself is capped at our current max in the `healed` callback.)
+     */
     private checkPickups(): void {
         const s = this.ship;
-
-        if (s.hp >= s.maxHp) {
-            return; // every circle is full: leave it for someone who needs it
-        }
 
         const reach = this.shipRadius() + PICKUP_RADIUS + 1;
 
@@ -766,7 +775,10 @@ class Game {
 
     private effects() {
         return {
-            rockHit: (x: number, y: number) => this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25),
+            rockHit: (x: number, y: number) => {
+                this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25);
+                this.playAt(x, y, (volume, pan) => this.sounds.rockHit(volume, pan));
+            },
             // Much smaller than a ship blowing up. The rock's own outline flashes bright for an instant, its dust
             // bursts out from the whole body (not a single point), and a shockwave grows from just inside its edge,
             // so the effect fills the space the rock left from the very first frame.
@@ -776,6 +788,7 @@ class Game {
                 const rocky = [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL];
                 const t = this.session.now();
 
+                this.playAt(x, y, (volume, pan) => this.sounds.rockBreak(size, volume, pan));
                 this.rockFlashes.push({ rock, x, y, angle: rockAngle(rock, t), until: t + 0.07 });
                 this.burst(x, y, 10 + size * 10, rocky, 15, 55 + size * 20, 1.9, C.ROCK_FILL, radius * 0.8);
                 this.scatterShards(x, y, size * 2, [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL], 0, 0);
@@ -809,6 +822,7 @@ class Game {
             },
             shipHurt: (block: number, x: number, y: number, dx: number, dy: number) => {
                 this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3);
+                this.playAt(x, y, (volume, pan) => this.sounds.hurt(Math.max(0.4, volume), pan));
                 this.scatterShards(x, y, 9, [block, block + 2, block + 1], dx, dy);
             },
         };
