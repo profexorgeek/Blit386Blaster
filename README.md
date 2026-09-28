@@ -20,6 +20,6 @@ cd game && npm install && npm run dev      # terminal 2
 ## Deploy
 
 1. **Relay:** in the [Render dashboard](https://dashboard.render.com), choose **New > Blueprint** and pick this repo.
-   `render.yaml` sets up a free web service named `blit386blaster-relay`. Details in [`relay/README.md`](relay/README.md).
+   `render.yaml` sets up a free web service named `blit386blaster`. Details in [`relay/README.md`](relay/README.md).
 2. **Game:** make sure `game/.env.production` has the relay's URL, run `npm run build` in `game/`, and upload `dist/`
    anywhere that serves static files. Details in [`game/README.md`](game/README.md).

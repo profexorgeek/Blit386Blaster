@@ -76,9 +76,9 @@ The repo root has a [`render.yaml`](../render.yaml) Blueprint for a free Render 
 2. In the [Render dashboard](https://dashboard.render.com), choose **New > Blueprint**, connect GitHub, and pick the
    repo. Render reads `render.yaml`, builds `relay/` with `npm ci --omit=dev`, and starts `node src/server.ts` on Node 24
    with [`config.render.json`](config.render.json).
-3. Note the service URL Render shows, e.g. `https://blit386blaster-relay.onrender.com`. If it differs, update
+3. Note the service URL Render shows, e.g. `https://blit386blaster.onrender.com`. If it differs, update
    `game/.env.production` (`wss://` + the same host) and rebuild the game.
-4. Check it from your machine: `node scripts/check.ts wss://blit386blaster-relay.onrender.com blit386blaster`.
+4. Check it from your machine: `node scripts/check.ts wss://blit386blaster.onrender.com blit386blaster`.
    Three `OK` lines means it works.
 
 What to expect on the free plan: the service sleeps after 15 minutes without traffic and takes about a minute to wake on

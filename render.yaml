@@ -2,7 +2,7 @@
 # The relay runs on the free plan, which sleeps after 15 idle minutes and takes about a minute to wake.
 services:
   - type: web
-    name: blit386blaster-relay
+    name: blit386blaster
     runtime: node
     plan: free
     rootDir: relay
