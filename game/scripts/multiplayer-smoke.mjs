@@ -146,6 +146,25 @@ try {
 
     await a.screenshot({ path: 'screenshots/mp-a-before.png' });
 
+    // Kills make a ship bigger and easier to hit: a shot passing 10 px from B's center misses a fresh ship
+    // (radius 4) but hits one with 10 kills (radius 12).
+    const grazeB = () => a.evaluate(() => window.__game.game.session.fire(100, 160, 380, 0));
+
+    await grazeB();
+    await sleep(400);
+    check('graze misses a small ship', (await state(b)).ship.hp === 3);
+
+    await b.evaluate(() => {
+        window.__game.game.ship.kills = 10;
+    });
+    await grazeB();
+    await sleep(400);
+
+    const big = await state(b);
+
+    check('graze hits a 3x ship', big.ship.hp === 2, `hp=${big.ship.hp}`);
+    await b.evaluate(() => Object.assign(window.__game.game.ship, { kills: 0, hp: 3 }));
+
     await fireAt(a, 190, 150);
     await sleep(400);
     check('B lost one health', (await state(b)).ship.hp === 2);
