@@ -68,9 +68,43 @@ export function allocPlayerColor(hue: number): number {
 }
 
 export function setPlayerColor(block: number, hue: number): void {
-    palette.set(block, hslColor(hue, 0.8, 0.6));
-    palette.set(block + 1, hslColor(hue, 0.7, 0.35));
-    palette.set(block + 2, hslColor(hue, 0.5, 0.88));
+    setSlot(block, hslColor(hue, 0.8, 0.6));
+    setSlot(block + 1, hslColor(hue, 0.7, 0.35));
+    setSlot(block + 2, hslColor(hue, 0.5, 0.88));
+}
+
+/** The true colors while the palette is shown inverted, or null when it is not. */
+let saved: Color32[] | null = null;
+
+/**
+ * Shows every color as its negative (a photo-negative flash) or puts the real colors back. Because everything is
+ * drawn with palette slots, this flips the whole screen without touching a pixel.
+ */
+export function setInverted(on: boolean): void {
+    if (on && !saved) {
+        saved = [];
+
+        for (let slot = 1; slot < 256; slot++) {
+            saved[slot] = palette.get(slot);
+            palette.set(slot, saved[slot].invert());
+        }
+    } else if (!on && saved) {
+        for (let slot = 1; slot < 256; slot++) {
+            palette.set(slot, saved[slot]);
+        }
+
+        saved = null;
+    }
+}
+
+/** Sets a slot, keeping an inverted frame in step so the restore does not bring back a stale color. */
+function setSlot(slot: number, color: Color32): void {
+    if (saved) {
+        saved[slot] = color;
+        palette.set(slot, color.invert());
+    } else {
+        palette.set(slot, color);
+    }
 }
 
 export function freePlayerColor(block: number): void {

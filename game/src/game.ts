@@ -46,7 +46,7 @@ import {
 } from './constants.ts';
 import { circle, circleFill, convexPolygon, line, pixel, rectFill, text, textCentered, textWidth } from './draw.ts';
 import { Leaderboard } from './leaderboard.ts';
-import { C, allocPlayerColor, createPalette, randomShipHue, setPlayerColor } from './palette.ts';
+import { C, allocPlayerColor, createPalette, randomShipHue, setInverted, setPlayerColor } from './palette.ts';
 import { type Profile, loadProfile, randomName, saveProfile } from './profile.ts';
 import { type LocalShip, Session } from './session.ts';
 import { buildShipSprites, drawShip } from './sprites.ts';
@@ -122,6 +122,11 @@ class Game {
 
     particles: Particle[] = [];
     shards: Shard[] = [];
+    /** Expanding shockwave circles from explosions. */
+    rings: { x: number; y: number; age: number; duration: number; radius: number; color: number }[] = [];
+    /** An on-screen explosion asked for a one-frame negative flash; `isInverted` is true during that frame. */
+    flashPending = false;
+    isInverted = false;
     /** Set by a DOM listener: the engine's per-frame press edge can miss a click shorter than one frame. */
     clickQueued = false;
 
@@ -676,8 +681,20 @@ class Game {
             rockBroken: (size: number, x: number, y: number) =>
                 this.burst(x, y, 6 + size * 8, [C.ROCK_EDGE, C.ROCK_FILL, C.ROCK_FLASH], 20, 70 + size * 15, 0.9),
             shipExploded: (block: number, x: number, y: number) => {
-                this.burst(x, y, 50, [block, block + 1, block + 2], 20, 160, 1.2);
-                this.scatterShards(x, y, 24, block, 0, 0);
+                this.burst(x, y, 170, [block, block + 1, block + 2, C.ROCK_FLASH, C.TEXT], 30, 290, 1.9);
+                this.burst(x, y, 40, [block + 2, C.TEXT], 10, 60, 0.8);
+                this.scatterShards(x, y, 44, block, 0, 0);
+                this.rings.push({ x, y, age: 0, duration: 0.5, radius: 70, color: block + 2 });
+                this.rings.push({ x, y, age: 0, duration: 0.3, radius: 40, color: C.ROCK_FLASH });
+
+                // A one-frame photo-negative flash, but only for explosions you can see, and never for players
+                // whose system asks for reduced motion.
+                const onScreen =
+                    x > this.camX - 60 && x < this.camX + SCREEN_W + 60 && y > this.camY - 60 && y < this.camY + SCREEN_H + 60;
+
+                if (onScreen && !BT.isReducedMotionPreferred) {
+                    this.flashPending = true;
+                }
             },
             shipHurt: (block: number, x: number, y: number, dx: number, dy: number) => {
                 this.burst(x, y, 8, [C.ROCK_FLASH], 40, 120, 0.3);
@@ -805,6 +822,14 @@ class Game {
     private updateParticles(): void {
         this.updateShards();
 
+        for (let i = this.rings.length - 1; i >= 0; i--) {
+            this.rings[i].age += TICK;
+
+            if (this.rings[i].age >= this.rings[i].duration) {
+                this.rings.splice(i, 1);
+            }
+        }
+
         const list = this.particles;
 
         for (let i = list.length - 1; i >= 0; i--) {
@@ -844,6 +869,18 @@ class Game {
     // --- Render ------------------------------------------------------------------------------------------------
 
     render(): void {
+        // The negative flash lasts exactly one drawn frame: undo last frame's, then start a new one if asked.
+        if (this.isInverted) {
+            setInverted(false);
+            this.isInverted = false;
+        }
+
+        if (this.flashPending) {
+            setInverted(true);
+            this.isInverted = true;
+            this.flashPending = false;
+        }
+
         const t = this.session.now();
         const s = this.ship;
         let shipX = s.x;
@@ -866,6 +903,14 @@ class Game {
         this.drawPickups(cx, cy, t);
         this.drawParticles(cx, cy);
         this.drawShards(cx, cy);
+
+        for (const ring of this.rings) {
+            // Fast at first, easing out as it reaches full size.
+            const progress = ring.age / ring.duration;
+            const radius = Math.max(1, Math.round(ring.radius * (1 - (1 - progress) ** 3)));
+
+            circle(ring.x - cx, ring.y - cy, radius, ring.color);
+        }
         this.drawBullets(cx, cy, t);
 
         for (const player of this.session.players.values()) {
