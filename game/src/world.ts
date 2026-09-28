@@ -23,7 +23,7 @@ export function worldSizeFor(playerCount: number): number {
 }
 
 export function rockTargetMass(size: number): number {
-    return Math.max(ROCK_MIN_MASS, Math.round(size * size * ROCK_DENSITY));
+    return Math.max(ROCK_MIN_MASS, size * size * ROCK_DENSITY);
 }
 
 export interface Rock {

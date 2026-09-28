@@ -22,6 +22,7 @@ export const WORLD_PER_PLAYER = 250;
 export const WORLD_SHRINK_DELAY = 10;
 
 // --- Ships ---
+/** Collision radius of a 1x ship. Bigger phases multiply it (see shipScale). */
 export const SHIP_RADIUS = 4;
 export const SHIP_ACCEL = 420;
 export const SHIP_STRAFE_ACCEL = 340;
@@ -31,6 +32,25 @@ export const SHIP_MAX_SPEED = 220;
 export const SHIP_DRAG = 0.985;
 export const SHIP_MASS = 1;
 export const SHIP_ROTATIONS = 16;
+
+/**
+ * Successful pilots become easier targets. Kill counts (this life) at which the ship grows to 2x and 3x size;
+ * its hit circle grows with it.
+ */
+export const SHIP_GROW_AT_KILLS = [5, 10];
+
+/** Each kill takes this fraction off thrust and top speed, down to SHIP_MIN_SPEED_FACTOR. */
+export const KILL_SLOWDOWN = 0.03;
+export const SHIP_MIN_SPEED_FACTOR = 0.6;
+
+/** 1, 2 or 3: how many times bigger than the base 8x8 a ship with `kills` kills is. */
+export function shipScale(kills: number): number {
+    return 1 + SHIP_GROW_AT_KILLS.filter((threshold) => kills >= threshold).length;
+}
+
+export function shipSpeedFactor(kills: number): number {
+    return Math.max(SHIP_MIN_SPEED_FACTOR, 1 - KILL_SLOWDOWN * kills);
+}
 
 /** Health circles at spawn. Kills add a circle (up to MAX_HEALTH); pickups only refill existing ones. */
 export const START_HEALTH = 3;
@@ -61,10 +81,10 @@ export const ROCK_HIT_SCALE = 0.9;
 export const ROCK_MAX_SPEED = 120;
 /**
  * The host keeps the field topped up to this many full-size rocks' worth of mass per square pixel
- * (320 in a 5000x5000 world), and never fewer than ROCK_MIN_MASS.
+ * (352 in a 5000x5000 world), and never fewer than ROCK_MIN_MASS.
  */
-export const ROCK_DENSITY = 320 / (5000 * 5000);
-export const ROCK_MIN_MASS = 4;
+export const ROCK_DENSITY = 352 / (5000 * 5000);
+export const ROCK_MIN_MASS = 4.4;
 export const ROCK_SPAWN_INTERVAL = 0.4;
 export const ROCK_SPAWN_CLEARANCE = 400;
 export const BOUNCE_RESTITUTION = 0.85;

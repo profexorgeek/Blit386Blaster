@@ -39,6 +39,8 @@ import {
     SHIP_STRAFE_ACCEL,
     START_HEALTH,
     WORLD_MIN,
+    shipScale,
+    shipSpeedFactor,
 } from './constants.ts';
 import { circle, circleFill, convexPolygon, line, pixel, rectFill, text, textCentered, textWidth } from './draw.ts';
 import { Leaderboard } from './leaderboard.ts';
@@ -275,30 +277,32 @@ class Game {
             }
         }
 
-        // Thrust relative to the facing: W/S along it, A/D across it.
+        // Thrust relative to the facing: W/S along it, A/D across it. Every kill makes the ship a little sluggish.
         const fx = Math.cos(s.angle);
         const fy = Math.sin(s.angle);
+        const pace = shipSpeedFactor(s.kills);
+        const maxSpeed = SHIP_MAX_SPEED * pace;
         let ax = 0;
         let ay = 0;
 
         if (BT.isKeyDown('KeyW')) {
-            ax += fx * SHIP_ACCEL;
-            ay += fy * SHIP_ACCEL;
+            ax += fx * SHIP_ACCEL * pace;
+            ay += fy * SHIP_ACCEL * pace;
         }
 
         if (BT.isKeyDown('KeyS')) {
-            ax -= fx * SHIP_REVERSE_ACCEL;
-            ay -= fy * SHIP_REVERSE_ACCEL;
+            ax -= fx * SHIP_REVERSE_ACCEL * pace;
+            ay -= fy * SHIP_REVERSE_ACCEL * pace;
         }
 
         if (BT.isKeyDown('KeyD')) {
-            ax -= fy * SHIP_STRAFE_ACCEL;
-            ay += fx * SHIP_STRAFE_ACCEL;
+            ax -= fy * SHIP_STRAFE_ACCEL * pace;
+            ay += fx * SHIP_STRAFE_ACCEL * pace;
         }
 
         if (BT.isKeyDown('KeyA')) {
-            ax += fy * SHIP_STRAFE_ACCEL;
-            ay -= fx * SHIP_STRAFE_ACCEL;
+            ax += fy * SHIP_STRAFE_ACCEL * pace;
+            ay -= fx * SHIP_STRAFE_ACCEL * pace;
         }
 
         const thrust = Math.hypot(ax, ay);
@@ -310,9 +314,9 @@ class Game {
 
         const speed = Math.hypot(s.vx, s.vy);
 
-        if (speed > SHIP_MAX_SPEED) {
-            s.vx *= SHIP_MAX_SPEED / speed;
-            s.vy *= SHIP_MAX_SPEED / speed;
+        if (speed > maxSpeed) {
+            s.vx *= maxSpeed / speed;
+            s.vy *= maxSpeed / speed;
         }
 
         s.x += s.vx * TICK;
@@ -323,7 +327,7 @@ class Game {
         this.collideWithShips();
 
         if (thrust > 0) {
-            this.emitExhaust(s.x, s.y, s.vx, s.vy, s.tx, s.ty, this.colorBlock);
+            this.emitExhaust(s.x, s.y, s.vx, s.vy, s.tx, s.ty, this.colorBlock, shipScale(s.kills));
         }
 
         this.fireCooldown -= TICK;
@@ -331,8 +335,8 @@ class Game {
         if ((BT.isDown(BT.BTN_POINTER_A, 0) || BT.isKeyDown('Space')) && this.fireCooldown <= 0) {
             this.fireCooldown = FIRE_COOLDOWN;
             this.session.fire(
-                s.x + fx * 5,
-                s.y + fy * 5,
+                s.x + fx * 5 * shipScale(s.kills),
+                s.y + fy * 5 * shipScale(s.kills),
                 fx * BULLET_SPEED + s.vx,
                 fy * BULLET_SPEED + s.vy,
             );
@@ -355,9 +359,14 @@ class Game {
         this.centerCamera(s.x, s.y);
     }
 
+    /** Our ship's collision radius; it grows with kills (see SHIP_GROW_AT_KILLS). */
+    private shipRadius(): number {
+        return SHIP_RADIUS * shipScale(this.ship.kills);
+    }
+
     private bounceOffWalls(): void {
         const s = this.ship;
-        const r = SHIP_RADIUS;
+        const r = this.shipRadius();
 
         if (s.x < r) {
             s.x = r;
@@ -382,7 +391,7 @@ class Game {
 
         for (const rock of this.session.rocks.values()) {
             const m = rockMotion(rock, t, this.motion);
-            const reach = rockHitRadius(rock) + SHIP_RADIUS;
+            const reach = rockHitRadius(rock) + this.shipRadius();
             const dx = s.x - m.x;
             const dy = s.y - m.y;
 
@@ -427,12 +436,12 @@ class Game {
     /** Ships bounce off each other too. Each player only moves their own ship, so this is half the exchange. */
     private collideWithShips(): void {
         const s = this.ship;
-        const reach = SHIP_RADIUS * 2;
-
         for (const player of this.session.players.values()) {
             if (!player.alive || !player.hasState) {
                 continue;
             }
+
+            const reach = this.shipRadius() + SHIP_RADIUS * shipScale(player.kills);
 
             const dx = s.x - player.dx;
             const dy = s.y - player.dy;
@@ -495,7 +504,7 @@ class Game {
 
             if (isMine) {
                 for (const player of this.session.players.values()) {
-                    if (player.alive && segmentHitsCircle(before.x, before.y, now.x, now.y, player.dx, player.dy, SHIP_RADIUS + 1)) {
+                    if (player.alive && segmentHitsCircle(before.x, before.y, now.x, now.y, player.dx, player.dy, SHIP_RADIUS * shipScale(player.kills) + 1)) {
                         bullet.dead = true;
                         break;
                     }
@@ -504,7 +513,7 @@ class Game {
                 continue;
             }
 
-            if (s.alive && t >= this.shieldUntil && segmentHitsCircle(before.x, before.y, now.x, now.y, s.x, s.y, SHIP_RADIUS + 1)) {
+            if (s.alive && t >= this.shieldUntil && segmentHitsCircle(before.x, before.y, now.x, now.y, s.x, s.y, this.shipRadius() + 1)) {
                 this.takeHit(bullet);
             }
         }
@@ -526,7 +535,7 @@ class Game {
         const start = bulletPos(bullet, Math.max(bullet.t0, t), { x: 0, y: 0, vx: 0, vy: 0 });
         const end = bulletPos(bullet, bullet.t0 + BULLET_LIFE, { x: 0, y: 0, vx: 0, vy: 0 });
 
-        if (segmentHitsCircle(start.x, start.y, end.x, end.y, s.x, s.y, SHIP_RADIUS + 1)) {
+        if (segmentHitsCircle(start.x, start.y, end.x, end.y, s.x, s.y, this.shipRadius() + 1)) {
             this.takeHit(bullet);
         }
     }
@@ -594,7 +603,7 @@ class Game {
             return; // every circle is full: leave it for someone who needs it
         }
 
-        const reach = SHIP_RADIUS + PICKUP_RADIUS + 1;
+        const reach = this.shipRadius() + PICKUP_RADIUS + 1;
 
         for (const pickup of this.session.pickups.values()) {
             if (Math.abs(pickup.x - s.x) < reach && Math.abs(pickup.y - s.y) < reach) {
@@ -690,7 +699,16 @@ class Game {
     }
 
     /** Engine exhaust: pixels squirt out opposite the thrust, in the ship's own color. */
-    private emitExhaust(x: number, y: number, vx: number, vy: number, tx: number, ty: number, block: number): void {
+    private emitExhaust(
+        x: number,
+        y: number,
+        vx: number,
+        vy: number,
+        tx: number,
+        ty: number,
+        block: number,
+        scale: number,
+    ): void {
         for (let i = 0; i < 2; i++) {
             const speed = randomRange(60, 140);
             const spread = randomRange(-0.35, 0.35);
@@ -698,8 +716,8 @@ class Game {
             const ey = -ty * Math.cos(spread) - tx * Math.sin(spread);
 
             this.addParticle(
-                x + ex * 4,
-                y + ey * 4,
+                x + ex * 4 * scale,
+                y + ey * 4 * scale,
                 vx * 0.3 + ex * speed,
                 vy * 0.3 + ey * speed,
                 randomRange(0.2, 0.45),
@@ -739,7 +757,16 @@ class Game {
         // Remote ships squirt exhaust too, from the thrust direction in their last report.
         for (const player of this.session.players.values()) {
             if (player.alive && (player.tx !== 0 || player.ty !== 0)) {
-                this.emitExhaust(player.dx, player.dy, player.vx, player.vy, player.tx, player.ty, player.colorBlock);
+                this.emitExhaust(
+                    player.dx,
+                    player.dy,
+                    player.vx,
+                    player.vy,
+                    player.tx,
+                    player.ty,
+                    player.colorBlock,
+                    shipScale(player.kills),
+                );
             }
         }
     }
@@ -772,7 +799,7 @@ class Game {
 
         for (const player of this.session.players.values()) {
             if (player.alive && player.hasState) {
-                drawShip(player.dx - cx, player.dy - cy, player.angle, player.colorBlock);
+                drawShip(player.dx - cx, player.dy - cy, player.angle, player.colorBlock, shipScale(player.kills));
             }
         }
 
@@ -780,7 +807,7 @@ class Game {
             const shielded = t < this.shieldUntil;
 
             if (!shielded || Math.floor(t * 10) % 2 === 0) {
-                drawShip(shipX - cx, shipY - cy, s.angle, this.colorBlock);
+                drawShip(shipX - cx, shipY - cy, s.angle, this.colorBlock, shipScale(s.kills));
             }
         }
 
