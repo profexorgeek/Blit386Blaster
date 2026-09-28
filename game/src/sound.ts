@@ -173,7 +173,7 @@ export class Sounds {
     }
 
     shoot(volume = 1, pan = 0): void {
-        BT.soundPlay(this.shootClip, { volume: 0.35 * volume, pan, pitch: 0.95 + Math.random() * 0.1 });
+        BT.soundPlay(this.shootClip, { volume: 0.2 * volume, pan, pitch: 0.95 + Math.random() * 0.1 });
     }
 
     /** `speed` is how hard the ship hit (closing speed in px/s). */
