@@ -24,6 +24,8 @@ import {
     FIRE_COOLDOWN,
     HUD_BOTTOM,
     HUD_TOP,
+    PICKUP_BLINK,
+    PICKUP_LIFETIME,
     PICKUP_RADIUS,
     RESPAWN_DELAY,
     ROCK_SIZES,
@@ -793,7 +795,7 @@ class Game {
         drawStarfield(cx, cy);
         this.drawBoundary(cx, cy);
         this.drawRocks(cx, cy, t);
-        this.drawPickups(cx, cy);
+        this.drawPickups(cx, cy, t);
         this.drawParticles(cx, cy);
         this.drawBullets(cx, cy, t);
 
@@ -847,12 +849,19 @@ class Game {
         }
     }
 
-    private drawPickups(cx: number, cy: number): void {
+    private drawPickups(cx: number, cy: number, t: number): void {
         for (const pickup of this.session.pickups.values()) {
             const x = pickup.x - cx;
             const y = pickup.y - cy;
 
             if (x < -8 || y < -8 || x > SCREEN_W + 8 || y > SCREEN_H + 8 || this.session.isClaimPending(pickup.id)) {
+                continue;
+            }
+
+            // In its last seconds a pickup blinks (4 times a second) to warn it is about to vanish.
+            const remaining = PICKUP_LIFETIME - (t - pickup.t0);
+
+            if (remaining < PICKUP_BLINK && Math.floor(remaining * 8) % 2 === 1) {
                 continue;
             }
 

@@ -91,7 +91,9 @@ export const BOUNCE_RESTITUTION = 0.85;
 
 // --- Health pickups ---
 export const PICKUP_RADIUS = 3;
-export const PICKUP_LIFETIME = 90;
+/** Seconds a health pickup lasts; it blinks for the last PICKUP_BLINK seconds as a warning. */
+export const PICKUP_LIFETIME = 10;
+export const PICKUP_BLINK = 3;
 
 // --- Networking ---
 export const SHIP_SEND_INTERVAL = 1 / 20;
