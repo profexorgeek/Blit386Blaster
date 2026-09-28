@@ -109,7 +109,8 @@ export interface RemotePlayer {
 /** Visual reactions the session asks the game to play. */
 export interface Effects {
     rockHit(x: number, y: number): void;
-    rockBroken(size: number, x: number, y: number): void;
+    /** A rock broke apart at (x, y). The rock object is already out of the field but still describes its shape. */
+    rockBroken(rock: Rock, x: number, y: number): void;
     shipExploded(colorBlock: number, x: number, y: number): void;
     /** A ship took a hit from a bullet travelling along (dx, dy) (a unit vector, or zero if unknown). */
     shipHurt(colorBlock: number, x: number, y: number, dx: number, dy: number): void;
@@ -424,7 +425,7 @@ export class Session {
                     if (rock) {
                         const at = rockMotion(rock, t, scratch);
 
-                        this.fx.rockBroken(rock.size, at.x, at.y);
+                        this.fx.rockBroken(rock, at.x, at.y);
                         this.rocks.delete(id);
                     }
                 }
@@ -775,7 +776,7 @@ export class Session {
         const t = this.now();
         const at = rockMotion(rock, t, scratch);
         this.rocks.delete(rock.id);
-        this.fx.rockBroken(rock.size, at.x, at.y);
+        this.fx.rockBroken(rock, at.x, at.y);
 
         if (rock.size > 1) {
             // Fragments fly apart sideways to the shot, keeping some of the parent's drift.

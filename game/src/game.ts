@@ -127,7 +127,17 @@ class Game {
     particles: Particle[] = [];
     shards: Shard[] = [];
     /** Expanding shockwave circles from explosions. */
-    rings: { x: number; y: number; age: number; duration: number; radius: number; color: number }[] = [];
+    rings: {
+        x: number;
+        y: number;
+        age: number;
+        duration: number;
+        startRadius: number;
+        radius: number;
+        color: number;
+    }[] = [];
+    /** A just-broken rock's outline, flashed bright for a moment so the rock never simply blinks out. */
+    rockFlashes: { rock: Rock; x: number; y: number; angle: number; until: number }[] = [];
     /** An on-screen explosion asked for a negative flash; `isInverted` is true while it shows. */
     flashPending = false;
     isInverted = false;
@@ -757,19 +767,25 @@ class Game {
     private effects() {
         return {
             rockHit: (x: number, y: number) => this.burst(x, y, 4, [C.ROCK_FLASH, C.ROCK_EDGE], 30, 90, 0.25),
-            // Much smaller than a ship blowing up: a quick shockwave the size of the rock, dust that lingers and
-            // dims, and a few chips of rock.
-            rockBroken: (size: number, x: number, y: number) => {
+            // Much smaller than a ship blowing up. The rock's own outline flashes bright for an instant, its dust
+            // bursts out from the whole body (not a single point), and a shockwave grows from just inside its edge,
+            // so the effect fills the space the rock left from the very first frame.
+            rockBroken: (rock: Rock, x: number, y: number) => {
+                const size = rock.size;
+                const radius = ROCK_SIZES[size].radius;
                 const rocky = [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL];
+                const t = this.session.now();
 
-                this.burst(x, y, 10 + size * 10, rocky, 15, 55 + size * 20, 1.9, C.ROCK_FILL);
+                this.rockFlashes.push({ rock, x, y, angle: rockAngle(rock, t), until: t + 0.07 });
+                this.burst(x, y, 10 + size * 10, rocky, 15, 55 + size * 20, 1.9, C.ROCK_FILL, radius * 0.8);
                 this.scatterShards(x, y, size * 2, [C.ROCK_EDGE, C.ROCK_FLASH, C.ROCK_FILL], 0, 0);
                 this.rings.push({
                     x,
                     y,
                     age: 0,
                     duration: 0.22 + size * 0.05,
-                    radius: ROCK_SIZES[size].radius + 8,
+                    startRadius: Math.round(radius * 0.8),
+                    radius: radius + 10,
                     color: C.ROCK_EDGE,
                 });
             },
@@ -777,8 +793,8 @@ class Game {
                 this.burst(x, y, 170, [block, block + 1, block + 2, C.ROCK_FLASH, C.TEXT], 30, 290, 1.9);
                 this.burst(x, y, 40, [block + 2, C.TEXT], 10, 60, 0.8);
                 this.scatterShards(x, y, 44, [block, block + 2, block + 1], 0, 0);
-                this.rings.push({ x, y, age: 0, duration: 0.5, radius: 70, color: block + 2 });
-                this.rings.push({ x, y, age: 0, duration: 0.3, radius: 40, color: C.ROCK_FLASH });
+                this.rings.push({ x, y, age: 0, duration: 0.5, startRadius: 6, radius: 70, color: block + 2 });
+                this.rings.push({ x, y, age: 0, duration: 0.3, startRadius: 4, radius: 40, color: C.ROCK_FLASH });
 
                 // A one-frame photo-negative flash, but only for explosions you can see, and never for players
                 // whose system asks for reduced motion.
@@ -807,15 +823,18 @@ class Game {
         maxSpeed: number,
         life: number,
         fadeColor?: number,
+        spawnRadius = 0,
     ): void {
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = randomRange(minSpeed, maxSpeed);
             const lifetime = life * randomRange(0.5, 1);
+            // Spread evenly over a disc (the square root keeps the middle from bunching up), flying outward.
+            const start = Math.sqrt(Math.random()) * spawnRadius;
 
             this.addParticle(
-                x,
-                y,
+                x + Math.cos(angle) * start,
+                y + Math.sin(angle) * start,
                 Math.cos(angle) * speed,
                 Math.sin(angle) * speed,
                 lifetime,
@@ -1016,6 +1035,7 @@ class Game {
         drawStarfield(cx, cy);
         this.drawBoundary(cx, cy);
         this.drawRocks(cx, cy, t);
+        this.drawRockFlashes(cx, cy, t);
         this.drawPickups(cx, cy, t);
         this.drawParticles(cx, cy);
         this.drawShards(cx, cy);
@@ -1023,7 +1043,8 @@ class Game {
         for (const ring of this.rings) {
             // Fast at first, easing out as it reaches full size.
             const progress = ring.age / ring.duration;
-            const radius = Math.max(1, Math.round(ring.radius * (1 - (1 - progress) ** 3)));
+            const eased = 1 - (1 - progress) ** 3;
+            const radius = Math.max(1, Math.round(ring.startRadius + (ring.radius - ring.startRadius) * eased));
 
             circle(ring.x - cx, ring.y - cy, radius, ring.color);
         }
@@ -1129,6 +1150,26 @@ class Game {
             const flashing = t < rock.flashUntil;
 
             convexPolygon(points, flashing ? C.ROCK_FLASH : C.ROCK_FILL, flashing ? C.ROCK_FLASH : C.ROCK_EDGE);
+        }
+    }
+
+    private drawRockFlashes(cx: number, cy: number, t: number): void {
+        this.rockFlashes = this.rockFlashes.filter((flash) => t < flash.until);
+
+        for (const flash of this.rockFlashes) {
+            const cos = Math.cos(flash.angle);
+            const sin = Math.sin(flash.angle);
+            const shape = flash.rock.shape;
+            const points: number[] = [];
+
+            for (let i = 0; i < shape.length; i += 2) {
+                points.push(
+                    Math.round(flash.x - cx + shape[i] * cos - shape[i + 1] * sin),
+                    Math.round(flash.y - cy + shape[i] * sin + shape[i + 1] * cos),
+                );
+            }
+
+            convexPolygon(points, C.ROCK_FLASH, C.ROCK_FLASH);
         }
     }
 
