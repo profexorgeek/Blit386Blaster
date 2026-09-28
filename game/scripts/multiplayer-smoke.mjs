@@ -115,7 +115,38 @@ try {
 
     check('world grew to 750 for two players, on both', sizes[0] === 750 && sizes[1] === 750, sizes.join(' / '));
 
-    // Park both ships in a corner far from the rock field's usual traffic; keep firing lines clear.
+    // A rock hit reported by the non-host is applied by the host and synced back to both.
+    const hostPage = sa.isHost ? a : b;
+    const otherPage = sa.isHost ? b : a;
+    const rockId = await otherPage.evaluate(() => {
+        const session = window.__game.game.session;
+        const rock = [...session.rocks.values()].find((r) => r.hp === 3);
+        const bullet = { id: 'test', owner: session.selfId, x0: 0, y0: 0, vx: 1, vy: 0, t0: 0, dead: false };
+
+        session.reportRockHit(bullet, rock, 0, 0);
+
+        return rock.id;
+    });
+
+    await sleep(400);
+
+    const rockHp = (page) => page.evaluate((id) => window.__game.game.session.rocks.get(id)?.hp, rockId);
+
+    check('non-host rock hit applied by host', (await rockHp(hostPage)) === 2 && (await rockHp(otherPage)) === 2);
+
+    // Combat checks below need clear firing lines, and a rock drifting through one makes them flaky. The host
+    // empties the field, stops spawning, and sends everyone the empty world.
+    await hostPage.evaluate(() => {
+        const session = window.__game.game.session;
+
+        session.spawnRock = () => null;
+        session.rocks.clear();
+        session.send(session.worldSnapshot());
+    });
+    await sleep(300);
+    check('rock field cleared for combat', (await state(otherPage)).rocks === 0);
+
+    // Park both ships in a corner.
     await spawnAt(a, 150, 150);
     await spawnAt(b, 190, 150);
 
@@ -219,25 +250,6 @@ try {
 
     await a.screenshot({ path: 'screenshots/mp-a-dead.png' });
     clearInterval(park);
-
-    // A rock hit reported by the non-host is applied by the host and synced back to both.
-    const hostPage = sa.isHost ? a : b;
-    const otherPage = sa.isHost ? b : a;
-    const rockId = await otherPage.evaluate(() => {
-        const session = window.__game.game.session;
-        const rock = [...session.rocks.values()].find((r) => r.hp === 3);
-        const bullet = { id: 'test', owner: session.selfId, x0: 0, y0: 0, vx: 1, vy: 0, t0: 0, dead: false };
-
-        session.reportRockHit(bullet, rock, 0, 0);
-
-        return rock.id;
-    });
-
-    await sleep(400);
-
-    const rockHp = (page) => page.evaluate((id) => window.__game.game.session.rocks.get(id)?.hp, rockId);
-
-    check('non-host rock hit applied by host', (await rockHp(hostPage)) === 2 && (await rockHp(otherPage)) === 2);
 
     // Host hand-over: close the host, and the other player should take over the field.
 
